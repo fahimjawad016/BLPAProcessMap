@@ -350,7 +350,7 @@
     .mom:hover circle { stroke-width:3; }
 
     /* spaghetti */
-    .spag-layout { display:grid; grid-template-columns:1fr 430px; gap:12px; }
+    .spag-layout { display:grid; grid-template-columns:1fr; gap:12px; }
     .spag-layout.single { grid-template-columns:1fr; }
     .spag-layout.single .spag-panel { max-height:none; }
     .tv h3 { margin:4px 0 2px; font-size:14px; } .tv-desc { margin:0 0 6px; font-size:12px; color:#5f6f66; }
@@ -372,7 +372,7 @@
     .spag-panel li b { color:#183b28; }
     .trav { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
     .trav button { border:1px solid var(--line); background:#fff; border-radius:999px; padding:5px 10px; cursor:pointer; font-weight:750; font-size:12px; }
-    .trav button[aria-pressed="true"] { color:#fff; }
+    .trav button[aria-pressed="true"] { color:#fff; background:var(--green-950); border-color:var(--green-950); }
     .swatch { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:middle; margin-right:5px; }
 
     .foot { color:var(--muted); font-size:11px; margin:18px 2px 0; }
@@ -1000,7 +1000,7 @@ function renderSpaghetti(){
   };
   const lists = shown.map(travBlock).join('');
   el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Spaghetti: who walks where for one import consignment</h2><p class="body">${esc(sp.intro)}</p><div class="toolbar"><div class="grp"><b>Port</b><span class="seg">${ports}</span></div><div class="grp"><b>Traveller</b><span class="trav">${travBtns}</span></div><span class="hint">Numbers on the lines are the order of moves for that traveller; each traveller's table lists its moves in order with the step, the time carried at that step today and what happens to the move after paperless; pick one traveller to see its table in full width. A red H or orange M on a location marks a measured wait rated High or Medium.</span></div>
-  <div class="spag-layout ${state.trav==='all'?'':'single'}"><div><svg class="spag-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"><defs>${defs}</defs><rect width="${W}" height="${H}" fill="#fff"/>${zones}${edgeSvg}${nodeSvg}</svg></div><div class="spag-panel">${lists}</div></div>
+  <div class="spag-layout single"><div><svg class="spag-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"><defs>${defs}</defs><rect width="${W}" height="${H}" fill="#fff"/>${zones}${edgeSvg}${nodeSvg}</svg></div><div class="spag-panel">${lists}</div></div>
   <h3>Arrivals per location, and why each one happens</h3><p>Each row is a place. The count is how many times someone or something arrives there for one consignment; the time is the sum of the figures carried by the steps that arrive there (each step counted once); the text says who arrives, how often, and for which step.</p>${xtable(['Location','Arrivals','Time carried here today','Who arrives, how often, and why'], touchRows, 900, `BLPA_spaghetti_places_${PORTS[state.spagPort].name}`)}${TIME_CAVEAT()}
   ${sp.findings?`<h3>What the picture says</h3><ul>${sp.findings.map(f=>`<li>${esc(f)}</li>`).join('')}${(() => { const ids = [...new Set(sp.travellers.flatMap(t => t.moves.map(m => m.step)))]; const r = timeTotals(state.spagPort, 'import', ids.map(id => stepById(asisSteps, id)).filter(Boolean), tobeSteps.filter(x => x.asis && ids.includes(x.asis))); const gone = sp.travellers.reduce((a,t)=>a+t.moves.filter(m=>afterPaperless(m.step)==='this move disappears').length,0), all = sp.travellers.reduce((a,t)=>a+t.moves.length,0), dropN = sp.travellers.reduce((a,t)=>a+t.moves.filter(m=>['removed','much shorter'].includes(afterPaperless(m.step))).length,0); return `<li><b>Time:</b> the steps behind these moves carry ${fmtToday(r)} today and ${fmtAfter(r)} after paperless${state.spagPort==='ben' ? `; an Indian truck typically stays ${esc(fmtDur(TIME.parts.stay.typical))} from gate in to gate out, and ${TIME.parts.recv.share}% of the average stay is between the posting record and the warehouse receipt` : ' (no truck data for this port yet: the measured steps carry no figure here and only the assumed steps are counted)'}. After paperless, ${gone} of the ${all} moves disappear and ${dropN} more are removed or become much shorter.</li>`; })()}</ul>`:''}</div>`;
   linkSteps(el, 'asis', state.spagPort, 'import');
