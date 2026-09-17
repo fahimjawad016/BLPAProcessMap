@@ -384,7 +384,8 @@
     }
     /* time figures, assumptions, exports */
     .tag.t.asm, .nc .nf span.t.asm { color:#41504a; background:#f4f6f5; border:1px dashed #9aa8a0; }
-    .caveat { margin:8px 0 10px; padding:8px 12px; background:#f7f9ff; border:1px solid #cdd7ea; border-radius:9px; font-size:11.5px; color:#2b3f4f; line-height:1.45; }
+    .caveat { margin:8px 0 10px; padding:6px 12px; background:#f7f9ff; border:1px solid #cdd7ea; border-radius:9px; font-size:11.5px; color:#2b3f4f; line-height:1.45; } .caveat summary { cursor:pointer; font-weight:800; font-size:12px; } .caveat[open] summary { margin-bottom:4px; }
+    .ph-chip.on { background:var(--green-950); color:#fff; border-color:var(--green-950); } .ph-chip small { opacity:.8; font-weight:600; margin-left:3px; }
     .cond { margin-top:3px; font-size:11px; color:#7a5a00; }
     .kpi-note { margin:2px 0 6px; font-size:11.5px; color:var(--muted); }
     .rt-saved { font-size:11px; color:#0f5132; font-weight:700; margin-top:2px; }
@@ -393,12 +394,18 @@
     .tblx-bar { display:flex; justify-content:flex-end; margin:2px 0 0; }
     .csv-link { border:none; background:none; color:#1d4ed8; font-size:11px; font-weight:700; cursor:pointer; padding:2px 4px; }
     .csv-link:hover { text-decoration:underline; }
+    .fb-status.ok { background:#eef8f1; border-color:#bfe0cb; color:#0f5132; } .fb-status code { font-size:11px; }
     .fb-status { margin:8px 0 10px; padding:8px 12px; background:#fff8e6; border:1px solid #f0d58a; border-radius:9px; font-size:12px; color:#5a4300; line-height:1.45; }
     .tv-sum span.meas b, .tv-sum span.chg b { font-weight:800; }
     .retable td small, .asum-table td small, .kpi small { font-weight:600; color:var(--muted); font-size:10.5px; }
   </style>
 </head>
 <body>
+<script>
+/* Shared comments. Leave empty when this page is served by server.js (comments go to /api/feedback on the same host).
+   Set the full address of a server.js host when the page itself is hosted elsewhere, for example 'https://comments.example.org/api/feedback'. */
+window.BLPA_FEEDBACK_API = '';
+</script>
 <main class="shell">
   <header class="hero">
     <p class="eyebrow">Bangladesh Land Port Authority · Integrated Border Management System · process map, version 1, draft for review</p>
@@ -435,7 +442,7 @@
   <section class="process-panel" id="divergence-panel" role="tabpanel" hidden></section>
   <section class="process-panel" id="feedback-panel" role="tabpanel" hidden></section>
 
-  <p class="foot">Working document for validation with BLPA and its partner agencies. Every step is written as we currently understand it; the "Questions to validate" tab lists what still needs confirmation. Reviewer mode (top right) is for the project team only.</p>
+  <p class="foot">Working document for validation with BLPA and its partner agencies. Every step is written as we currently understand it; use the Comment buttons to correct anything that is different at your port.</p>
 </main>
 <div id="fb-modal" hidden></div>
   <aside class="drawer" id="drawer" aria-live="polite"><button class="close" type="button" onclick="closeDrawer()" aria-label="Close">✕</button><div id="drawer-body"></div></aside>
@@ -450,7 +457,7 @@ function isToBe(s){ return 'asis' in s; }
 function levelClass(l){ return l==='High'?'high':l==='Medium'?'med':l==='Low'?'low':''; }
 function changeClass(c){ return (c==='Removed'||c==='Much shorter')?'drop':c==='Shorter'?'less':c==='Visible'?'vis':''; }
 function momentName(id){ return TIME.moments[id] || ('step ' + id); }
-const TIME_CAVEAT = () => `<div class="caveat"><b>How to read the time figures.</b> ${esc(TIME.caveat)}</div>`;
+const TIME_CAVEAT = () => `<details class="caveat"><summary>How to read the time figures</summary>${esc(TIME.caveat)}</details>`;
 /* role: 'carry' = this step carries the measured time of a span (the step where that time is spent); 'moment' = this step creates a recorded
    moment but the time is carried by another step; 'within' = the step lies inside a measured span; 'start' = the first recorded moment.
    basis: measured (Benapole data), indicative (Benapole figure shown for another port), assumed (site visits), reported (a figure the port gave), '' (nothing). */
@@ -786,14 +793,15 @@ function renderView(view){
   const port = PORTS[state.port]; const steps = resolveSteps(view, state.dir, state.port);
   const intro = FLOW_INTRO[view][state.dir][state.port] || FLOW_INTRO[view][state.dir].all || '';
   const el = document.getElementById(`${view}-panel`);
-  const head = `<div class="card" style="margin-top:8px"><h2>${view==='asis'?'AS-IS: what happens today':'TO-BE: the paperless process'} · ${esc(state.dir==='import'?'Import':'Export')} · ${esc(port.name)}</h2><p class="body">${esc(intro)}</p>${view==='tobe'?'<div class="note-draft"><b>Work in progress.</b> The paperless process shown here is a proposal for discussion and validation with BLPA and the agencies. It is not a final design; every step is open to comment.</div>':''}${toolbarHtml(view, steps)}${kpiHtml(view, steps, state.actor)}</div>`;
+  const head = `<div class="card" style="margin-top:8px"><h2>${view==='asis'?'AS-IS: what happens today':'TO-BE: the paperless process'} · ${esc(state.dir==='import'?'Import':'Export')} · ${esc(port.name)}</h2>${view==='tobe'?'<div class="note-draft"><b>Work in progress.</b> The paperless process shown here is a proposal for discussion and validation with BLPA and the agencies. It is not a final design; every step is open to comment.</div>':''}${toolbarHtml(view, steps)}</div>`;
+  const summary = `<div class="card"><h2>Summary${state.actor!=='all'?` for ${esc(actorLabel(state.actor))}`:''} · ${esc(port.name)} · ${esc(state.dir)}</h2><p class="body">${esc(intro)}</p>${kpiHtml(view, steps, state.actor)}${TIME_CAVEAT()}</div>`;
   let body = '';
   if (state.mode==='full') body = renderFull(view, steps);
   else if (state.mode==='phase') body = renderByPhase(view, steps);
   else body = renderByActor(view, steps);
   let abolished = '';
   if (view==='tobe') { const asis = resolveSteps('asis', state.dir, state.port); const kept = new Set(steps.map(s=>s.asis).filter(Boolean)); const gone = asis.filter(s=>!kept.has(s.id)); if (gone.length) abolished = `<div class="card"><h2>Today's steps that disappear</h2><p>AS-IS steps with no TO-BE successor: the walks, papers and counter visits the paperless process removes.</p><ul>${gone.map(s=>{ const t = timeAsIs(state.port, state.dir, s); return `<li><b>${esc(s.id)} ${esc(s.title)}</b>: ${esc(actorLabel(s.actor))}${t.basis?` · today: ${esc(timeSummary(t))}`:''}</li>`; }).join('')}</ul></div>`; }
-  el.innerHTML = head + body + abolished;
+  el.innerHTML = head + body + summary + abolished;
   if (state.mode==='full') { applyScale(view); bindPan(`vp-${view}`); }
   el.querySelectorAll('.viewport.short').forEach(v=>bindPan(v.id));
   applyDocHighlight(view);
@@ -1035,6 +1043,7 @@ function setTab(id){
   TABS.forEach(k => { document.getElementById(`${k}-panel`).hidden = (k!==id); document.getElementById(`tab-${k}`).setAttribute('aria-selected', String(k===id)); });
   document.body.dataset.tab = id; state.tab = id;
   if ((id==='asis'||id==='tobe') && document.getElementById(`${id}-panel`).dataset.stale) { delete document.getElementById(`${id}-panel`).dataset.stale; renderView(id); }
+  if (id==='analytics' && typeof chartW === 'function' && Math.abs(chartW().W - (state.anW || 0)) > 24) renderAnalytics();
   history.replaceState(null,'',`#${id}`); window.scrollTo({top:0});
 }
 function toggleReviewer(on){ state.reviewer = on; document.body.classList.toggle('reviewer-on', on); }
@@ -2656,11 +2665,13 @@ function renderTable(){
     let body;
     if (S.mode === 'table') body = (S.actor !== 'all' ? actorSummaryHtml('asis', port, dir, S.actor) : '') + groupedTable(vis, port, dir, phases, S.actor);
     else body = `<div class="rc-list">${vis.map(r => { const key = `${port}-${dir}-${r.a?r.a.id:'x'}-${r.t?r.t.id:'x'}`.replace(/\./g,'_'); return cardHtml(r, port, dir, A, T, phases, key, S.allOpen || S.open[key]); }).join('') || '<p class="muted">No steps match these filters.</p>'}</div>`;
-    el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Re-engineering: every step today beside its paperless step</h2>
-      <div class="note-draft"><b>Work in progress.</b> The paperless side is a proposal for discussion and validation, not a final design. Comments are welcome on every step.</div><p class="body">One row per step, grouped by stage: <b>today</b> on the left, the <b>re-engineered step</b> on the right, and the policy or rule it needs. Each stage ends with a subtotal and the table ends with a total; when an actor is chosen, the subtotals are for that actor alone. Click a row for the full detail of both steps. The time columns show a figure only where one exists: measured spans on the step where the time is spent, assumed figures elsewhere.</p>${TIME_CAVEAT()}
-      <h3>${esc(PORTS[port].name)} · ${esc(dir)}: what the paperless process changes${vis.length<rows.length?` (the ${vis.length} steps shown)`:''}</h3>${scoreboard(c, port, dir)}
-      ${journeyStrip(port, dir, rows, phases)}
-      ${toolbar}${strip}${body}
+    const phaseChips = `<div class="grp phases"><b>Phase</b><button type="button" class="ph-chip ${S.phase==='all'?'on':''}" onclick="tblSet('phase','all')">All</button>${phases.map(p => { const n = rows.filter(r => (r.t||r.a).phase === p.key).length; return `<button type="button" class="ph-chip ${S.phase===p.key?'on':''}" onclick="tblSet('phase', state.tbl.phase==='${p.key}'?'all':'${p.key}')" title="${esc(p.desc)}">${p.n} ${esc(p.label)} <small>${n}</small></button>`; }).join('')}</div>`;
+    el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Re-engineering: every step today beside its paperless step · ${esc(PORTS[port].name)} · ${esc(dir)}</h2>
+      <div class="note-draft"><b>Work in progress.</b> The paperless side is a proposal for discussion and validation, not a final design. Comments are welcome on every step.</div>
+      ${toolbar.slice(0, -6) + phaseChips + '</div>'}${strip}${body}</div>
+      <div class="card"><h2>Summary${S.actor!=='all'?` for ${esc(actorLabel(S.actor))}`:''}: what the paperless process changes${vis.length<rows.length?` (the ${vis.length} steps shown)`:''}</h2>
+      <p class="body">One row per step, grouped by stage: today on the left, the re-engineered step on the right, and the policy or rule it needs. Each stage ends with a subtotal and the table ends with a total; when an actor is chosen, the subtotals are for that actor alone. Click a row for the full detail of both steps. The time columns show a figure only where one exists: measured spans on the step where the time is spent, assumed figures elsewhere.</p>
+      ${scoreboard(c, port, dir)}${journeyStrip(port, dir, rows, phases)}${TIME_CAVEAT()}
       <h3 style="margin-top:22px">All ports at a glance</h3>${table(['Port','Import steps','Import: what happens to them','Paper steps','Signatures','High waits → waits removed or much shorter','Changes needed','Export steps','Export: what happens to them','Paper steps','Signatures'], portRows, 1100)}
       <p class="body" style="margin-top:8px">The three ports run the same ISLAS flow, so the counts differ only where a port has a step of its own (the truck scanner at Benapole; the stone route at Bhomra and Burimari) or a different signature practice.</p></div>`;
     el.querySelectorAll('.rc-side.today, .rt-side.asis, .rc-change').forEach(x => linkSteps(x, 'asis', port, dir)); el.querySelectorAll('.rc-side.paperless, .rt-side.tobe').forEach(x => linkSteps(x, 'tobe', port, dir));
@@ -2687,6 +2698,7 @@ function tblCsv(){
 const CH = { ink:'#2f3d36', muted:'#68756d', grid:'#e3e8e5', a:'#1f7a4d', b:'#2b6cb0', slow:'#c0392b', amber:'#b47d13', soft:'#cfe3d6', asm:'#9aa8a0', after:'#7fc59d' };
 const SPANC = { wb:'#0e7490', post:'#7c3aed', recv:'#1f7a4d', exit:'#b47d13' };
 const MONTH_CAP = () => `<p class="cap">One month of data: ${esc(ANALYTICS.meta.frm)} to ${esc(ANALYTICS.meta.to)}, ${ANALYTICS.meta.covered} reporting days out of ${ANALYTICS.meta.days}; ${ANALYTICS.meta.trips.toLocaleString()} Indian truck trips.</p>`;
+function chartW(){ const shell = document.querySelector('main.shell'); const W = Math.max(900, (shell ? shell.clientWidth : 1240) - 38); return { W, W2: Math.floor((W - 18) / 2) }; }
 function lvlColor(l){ return l === 'High' ? CH.slow : l === 'Medium' ? CH.amber : CH.a; }
 function fmtShort(h){ if (h == null) return ''; const m = Math.round(h * 60); if (m < 60) return m + ' min'; return `${Math.floor(m / 60)} h${m % 60 ? ' ' + String(m % 60).padStart(2, '0') : ''}`; }
 const HALO = 'paint-order="stroke" stroke="#fff" stroke-width="3.5" stroke-linejoin="round"';
@@ -2712,7 +2724,7 @@ function chartLine(series, cats, opt){
   return `<svg class="chart" viewBox="0 0 ${w} ${h + 6}" width="${w}" role="img" aria-label="${esc(opt.aria || '')}">${grid}${missing}${marks}<line x1="${padL}" x2="${w - padR}" y1="${padT + plotH}" y2="${padT + plotH}" stroke="#9aa8a0"/>${ref}${paths}${labels}${legend}</svg>`;
 }
 function chartHeat(grid, rowLabels, colLabels, opt){
-  const cw = 30, chh = 26, labW = 60, w = labW + 24 * cw + 10, h = 7 * chh + 34; const max = Math.max(...grid.flat().filter(v => v != null)) || 1;
+  const labW = 60, cw = Math.max(18, Math.floor(((opt.w || 790) - labW - 10) / 24)), chh = Math.round(cw * 0.87), w = labW + 24 * cw + 10, h = 7 * chh + 34; const max = Math.max(...grid.flat().filter(v => v != null)) || 1;
   const cells = grid.map((row, r) => row.map((v, c) => { if (v == null) return `<rect x="${labW + c * cw}" y="${r * chh}" width="${cw - 2}" height="${chh - 2}" fill="#f6e4e4"><title>${esc(rowLabels[r])} ${String(c).padStart(2, '0')}:00: no reporting day</title></rect>`; const t = v / max; const col = `rgba(31,122,77,${(0.08 + 0.92 * t).toFixed(2)})`; return `<rect x="${labW + c * cw}" y="${r * chh}" width="${cw - 2}" height="${chh - 2}" fill="${col}" rx="3"><title>${esc(rowLabels[r])} ${String(c).padStart(2, '0')}:00: ${esc(opt.fmt ? opt.fmt(v) : v)}</title></rect>${t > 0.55 ? `<text x="${labW + c * cw + (cw - 2) / 2}" y="${r * chh + chh / 2 + 3}" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">${Math.round(v)}</text>` : ''}`; }).join('')).join('');
   const rl = rowLabels.map((l, r) => `<text x="${labW - 8}" y="${r * chh + chh / 2 + 4}" text-anchor="end" font-size="12" fill="${CH.ink}">${esc(l)}</text>`).join('');
   const cl = colLabels.map((l, c) => c % 2 === 0 ? `<text x="${labW + c * cw + (cw - 2) / 2}" y="${7 * chh + 16}" text-anchor="middle" font-size="11" fill="${CH.muted}">${esc(l)}</text>` : '').join('');
@@ -2720,15 +2732,15 @@ function chartHeat(grid, rowLabels, colLabels, opt){
 }
 /* horizontal bars with the number written at the end of every bar. rows: [{label, sub, bars:[{v, color, text, dash}], note}] */
 function chartHBars(rows, opt){
-  const w = opt.w || 1000, labW = opt.labW || 250, barH = 15, gap = 4, padT = 8, padR = 330; const plotW = w - labW - padR;
+  const w = opt.w || 1000, labW = opt.labW || 250, barH = 15, gap = 4, padT = 8, padR = opt.padR || 430; const plotW = w - labW - padR; const rowH = 2 * (barH + gap) + 22;
   const max = opt.max || Math.max(...rows.flatMap(r => r.bars.map(b => b.v || 0))) || 1;
   let y = padT, out = '';
-  rows.forEach(r => { const hgt = Math.max(1, r.bars.length) * (barH + gap) + 8 + (r.note && r.bars.length ? 12 : 0); const midY = y + (r.bars.length ? Math.max(1, r.bars.length) * (barH + gap) + 8 : hgt) / 2;
+  rows.forEach(r => { const hgt = rowH; const midY = y + rowH / 2 - 4;
     out += `<text x="${labW - 12}" y="${midY - (r.sub ? 2 : -4)}" text-anchor="end" font-size="12" font-weight="700" fill="${CH.ink}">${esc(r.label)}</text>${r.sub ? `<text x="${labW - 12}" y="${midY + 12}" text-anchor="end" font-size="10.5" fill="${CH.muted}">${esc(r.sub)}</text>` : ''}`;
     let by = y + 4;
-    if (!r.bars.length) out += `<text x="${labW}" y="${by + 12}" font-size="11" fill="${CH.muted}">${esc(r.note || '')}</text>`;
+    if (!r.bars.length) out += `<text x="${labW}" y="${by + 12}" font-size="11" fill="${CH.muted}">${esc(r.note || '')}</text>`; const noteY = y + 2 * (barH + gap) + 12;
     r.bars.forEach(b => { const wid = Math.max(2, plotW * (b.v || 0) / max); out += `<rect x="${labW}" y="${by}" width="${wid}" height="${barH}" rx="3" fill="${b.color}" ${b.dash ? 'opacity=".55"' : ''}><title>${esc(b.text || '')}</title></rect><text x="${labW + wid + 6}" y="${by + barH - 3}" font-size="11" font-weight="700" fill="${CH.ink}">${esc(b.text || '')}</text>`; by += barH + gap; });
-    if (r.bars.length && r.note) out += `<text x="${labW}" y="${by + 9}" font-size="10" fill="${CH.muted}">${esc(r.note)}</text>`;
+    if (r.bars.length && r.note) out += `<text x="${labW}" y="${noteY}" font-size="10" fill="${CH.muted}">${esc(r.note)}</text>`;
     y += hgt; out += `<line x1="0" x2="${w}" y1="${y}" y2="${y}" stroke="${CH.grid}"/>`; });
   return `<svg class="chart" viewBox="0 0 ${w} ${y + 4}" width="${w}" role="img" aria-label="${esc(opt.aria || '')}">${out}</svg>`;
 }
@@ -2737,8 +2749,8 @@ function openBen(id){ state.port = 'ben'; state.dir = 'import'; ['asis','tobe'].
 function journeyRuler(){
   const P = TIME.parts; const spans = ['wb', 'post', 'recv', 'exit']; const MOM = [['2.2', 'Gate in'], ['3.2', 'Weighbridge'], ['4.3', 'Posting record'], ['5.2', 'Warehouse receipt'], ['7.2', 'Gate out']];
   const rowsDef = [['Quickest quarter of trucks', k => P[k].quick], ['Typical truck', k => P[k].typical], ['Slowest quarter of trucks', k => P[k].slowq]];
-  const w = 1120, labW = 210, totW = 150, plotW = w - labW - totW - 20, rowH = 46, top = 62; const maxTotal = Math.max(...rowsDef.map(r => spans.reduce((n, k) => n + r[1](k), 0))); const sc = plotW / maxTotal;
-  let out = ''; spans.forEach((k, i) => { const lx = labW + (i % 2) * 330, ly = 6 + Math.floor(i / 2) * 16; out += `<rect x="${lx}" y="${ly}" width="12" height="12" rx="2" fill="${SPANC[k]}"/><text x="${lx + 16}" y="${ly + 10}" font-size="11" fill="${CH.ink}">${esc(P[k].label)} (${esc(P[k].span)})</text>`; });
+  const w = chartW().W, labW = 210, totW = 150, plotW = w - labW - totW - 20, rowH = 46, top = 62; const maxTotal = Math.max(...rowsDef.map(r => spans.reduce((n, k) => n + r[1](k), 0))); const sc = plotW / maxTotal;
+  let out = ''; spans.forEach((k, i) => { const lx = labW + (i % 2) * Math.max(330, Math.floor(plotW / 2)), ly = 6 + Math.floor(i / 2) * 16; out += `<rect x="${lx}" y="${ly}" width="12" height="12" rx="2" fill="${SPANC[k]}"/><text x="${lx + 16}" y="${ly + 10}" font-size="11" fill="${CH.ink}">${esc(P[k].label)} (${esc(P[k].span)})</text>`; });
   out += `<text x="${labW}" y="50" font-size="11" fill="${CH.muted}">Bar length is time, to scale. The circles are the recorded moments; click one to open its step. The figures are in the table below.</text>`;
   rowsDef.forEach((r, ri) => { const y = top + ri * rowH; let x = labW; out += `<text x="${labW - 10}" y="${y + 20}" text-anchor="end" font-size="12.5" font-weight="700" fill="${CH.ink}">${esc(r[0])}</text>`;
     const mom = (si, xx) => { const m = MOM[si]; return `<g class="mom" onclick="openBen('${m[0]}')" style="cursor:pointer"><circle cx="${xx}" cy="${y + 16}" r="5" fill="#fff" stroke="${CH.ink}" stroke-width="1.5"><title>${esc(m[1])} (step ${m[0]})</title></circle></g>`; };
@@ -2761,7 +2773,7 @@ function phaseChart(){
     if (r.cond.length) note = 'when it applies: ' + r.cond.map(c => `${fmtH(c.hours)} at ${c.id}`).join(', ') + ' (not in the bars)';
     if (!bars.length && !note) note = p.key === 'ts' ? 'perishables: the transfer sits inside the span carried at step 5.1' : 'nothing timed and nothing assumed';
     return { label: `Phase ${p.n} · ${p.label}`, sub: `${ps.length} steps`, bars, note }; });
-  return chartHBars(rows, { aria: 'Time carried by each phase of the process map', labW: 330, w: 1100 });
+  return chartHBars(rows, { aria: 'Time carried by each phase of the process map', labW: 340, w: chartW().W });
 }
 /* today against after paperless, phase by phase, from the same figures as the re-engineering table */
 function savingChart(){
@@ -2769,7 +2781,7 @@ function savingChart(){
   const rows = phaseList('import').map(p => { const ps = A.filter(s => s.phase === p.key); const ts = T.filter(s => s.phase === p.key); const r = timeTotals('ben', 'import', ps, ts); if (!r.today && !r.after) return null;
     return { label: `Phase ${p.n} · ${p.label}`, bars: [{ v: r.today, color: CH.a, text: `today about ${fmtShort(r.today)}${r.measured ? ` (${fmtShort(r.measured)} measured)` : ' (assumed)'}` }, { v: r.after, color: CH.after, text: `after paperless about ${fmtShort(r.after)} (assumed)` }] }; }).filter(Boolean);
   const all = timeTotals('ben', 'import', A, T); rows.push({ label: 'All phases together', bars: [{ v: all.today, color: CH.a, text: `today about ${fmtShort(all.today)}` }, { v: all.after, color: CH.after, text: `after paperless about ${fmtShort(all.after)}: about ${fmtShort(all.today - all.after)} less` }] });
-  return chartHBars(rows, { aria: 'Time today and after paperless by phase', labW: 330, w: 1100 });
+  return chartHBars(rows, { aria: 'Time today and after paperless by phase', labW: 340, w: chartW().W });
 }
 function phaseTimeTable(){
   const steps = resolveSteps('asis', 'import', 'ben');
@@ -2804,13 +2816,13 @@ function actorSummaryHtml(view, port, dir, actorKey){
     ${row('Time in these steps (typical)', fmtToday(a.tm), fmtAfter(a.tm) + (a.tm.today && a.tm.after < a.tm.today ? ` <small>about ${esc(fmtH(a.tm.today - a.tm.after))} less</small>` : ''))}${row('Steps where the wait is removed or much shorter', '', a.drop)}</tbody></table>${fmtCond(a.tm)}<p class="asum-note">One month of data, five timestamps per truck: the measured figures are the spans carried by this actor's steps; every other figure is an assumption to be validated.</p></div>`;
 }
 function renderAnalytics(){
-  const el = document.getElementById('analytics-panel'); if (!el) return; const A = ANALYTICS; const d = h => fmtDur(h, false); const days = A.daily.map(x => x.d.slice(5).replace('-', '/'));
+  const el = document.getElementById('analytics-panel'); if (!el) return; const A = ANALYTICS; const { W, W2 } = chartW(); state.anW = W; const d = h => fmtDur(h, false); const days = A.daily.map(x => x.d.slice(5).replace('-', '/'));
   const missingIdx = A.daily.map((x, i) => x.arrivals == null ? i : -1).filter(i => i >= 0); const thuIdx = A.dailyTime.map((x, i) => x.wd === 'Thu' ? i : -1).filter(i => i >= 0);
-  const dailyInOut = chartLine([{ name: 'trucks in', values: A.daily.map(x => x.arrivals), color: CH.a }, { name: 'trucks out', values: A.daily.map(x => x.exits), color: CH.b }], days, { every: 2, missing: missingIdx, aria: 'Trucks in and out per day' });
-  const inside = chartLine([{ name: 'trucks still inside at midnight', values: A.inside.map(x => x.inside), color: CH.amber }], days, { every: 2, missing: missingIdx, legendAlways: true, aria: 'Trucks inside the port at the end of each day' });
-  const dailyStay = chartLine([{ name: 'typical stay of trucks arriving that day', values: A.dailyTime.map(x => x.medianDwell), color: CH.a }], days, { every: 2, missing: missingIdx, marks: thuIdx, markLabel: 'Thursday arrivals', legendAlways: true, fmt: v => d(v), fmtLabel: v => fmtShort(v), fmtTick: v => Math.round(v) + ' h', labelIdx: thuIdx, ref: A.stay.typical, refLabel: `month typical ${d(A.stay.typical)}`, aria: 'Typical stay by day of arrival' });
-  const heat = chartHeat(A.heat, ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')), { fmt: v => v + ' trucks in that hour on an average such day', aria: 'Arrivals by weekday and hour' });
-  const hourStay = chartLine([{ name: 'typical stay by hour of arrival', values: A.hourly.map(h => h.medianDwell), color: CH.a }], A.hourly.map(h => String(h.h).padStart(2, '0') + ':00'), { every: 2, w: 900, h: 220, legendAlways: true, fmt: v => d(v), fmtLabel: v => fmtShort(v), fmtTick: v => Math.round(v) + ' h', labels: 'all', ref: A.stay.typical, refLabel: `month typical ${d(A.stay.typical)}`, aria: 'Typical stay by hour of arrival' });
+  const dailyInOut = chartLine([{ name: 'trucks in', values: A.daily.map(x => x.arrivals), color: CH.a }, { name: 'trucks out', values: A.daily.map(x => x.exits), color: CH.b }], days, { w: W, every: 2, missing: missingIdx, aria: 'Trucks in and out per day' });
+  const inside = chartLine([{ name: 'trucks still inside at midnight', values: A.inside.map(x => x.inside), color: CH.amber }], days, { w: W, every: 2, missing: missingIdx, legendAlways: true, aria: 'Trucks inside the port at the end of each day' });
+  const dailyStay = chartLine([{ name: 'typical stay of trucks arriving that day', values: A.dailyTime.map(x => x.medianDwell), color: CH.a }], days, { w: W, every: 2, missing: missingIdx, marks: thuIdx, markLabel: 'Thursday arrivals', legendAlways: true, fmt: v => d(v), fmtLabel: v => fmtShort(v), fmtTick: v => Math.round(v) + ' h', labelIdx: thuIdx, ref: A.stay.typical, refLabel: `month typical ${d(A.stay.typical)}`, aria: 'Typical stay by day of arrival' });
+  const heat = chartHeat(A.heat, ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')), { w: W2, fmt: v => v + ' trucks in that hour on an average such day', aria: 'Arrivals by weekday and hour' });
+  const hourStay = chartLine([{ name: 'typical stay by hour of arrival', values: A.hourly.map(h => h.medianDwell), color: CH.a }], A.hourly.map(h => String(h.h).padStart(2, '0') + ':00'), { every: 2, w: W2, h: 250, legendAlways: true, fmt: v => d(v), fmtLabel: v => fmtShort(v), fmtTick: v => Math.round(v) + ' h', labels: 'all', ref: A.stay.typical, refLabel: `month typical ${d(A.stay.typical)}`, aria: 'Typical stay by hour of arrival' });
   const shedT = tableBars(A.sheds.map(s => ({ label: `Shed ${s.wh}`, trips: s.trips, median: s.median, p75: s.p75, hi: s.median > A.stay.typical * 1.3 })), [{ key: 'label', label: 'Shed' }, { key: 'trips', label: 'Trucks in the month' }, { key: 'median', label: 'Typical stay', bar: true, fmt: v => d(v) }, { key: 'p75', label: 'One truck in four stays longer than', fmt: v => d(v) }], { barKey: 'median', name: 'BLPA_analytics_sheds' });
   const distT = tableBars(A.dwellDist.map(x => ({ label: x.label, n: x.n, pct: x.pct })), [{ key: 'label', label: 'Stay in the port' }, { key: 'n', label: 'Trucks', fmt: v => v.toLocaleString() }, { key: 'pct', label: 'Share of trucks', bar: true, fmt: v => v + '%' }], { barKey: 'pct', name: 'BLPA_analytics_length_of_stay' });
   const weekT = tableBars(A.weekday.filter(w => w.medianDwell != null).map(w => ({ label: w.wd, arrivals: w.arrivals, exits: w.exits, median: w.medianDwell, hi: w.medianDwell > A.stay.typical * 1.3 })), [{ key: 'label', label: 'Day of arrival' }, { key: 'arrivals', label: 'Arrivals a day' }, { key: 'exits', label: 'Exits a day' }, { key: 'median', label: 'Typical stay', bar: true, fmt: v => d(v) }], { barKey: 'median', name: 'BLPA_analytics_weekday' });
@@ -2837,22 +2849,41 @@ function renderAnalytics(){
     <div class="card"><h2>How good the data is</h2><div class="two"><div><h3>Completeness of each recorded moment</h3>${completeT}</div><div><h3>Notes</h3><ul class="notes"><li>${A.meta.missing.length} dates in the window have no report (${esc(A.meta.missing.map(x => x.slice(5).replace('-', '/')).join(', '))}); most are Fridays.</li><li>Two weighbridges shared the month: scale 1 took ${A.scales[0].trips.toLocaleString()} trucks and scale 2 ${A.scales[1].trips.toLocaleString()}; gate to weighing takes about ${A.scales[0].medianMin} and ${A.scales[1].medianMin} minutes respectively.</li><li>Customs assessment was still open on ${A.flags[0].pct}% of trips and duty unpaid on ${A.flags[1].pct}% when the report was pulled; those trucks had left less often (${A.flags[0].exitRate}% and ${A.flags[1].exitRate}% against ${A.flags[0].exitRateYes}% and ${A.flags[1].exitRateYes}%).</li><li>Weighed net weight exceeds the declared weight on ${A.declared.overPct}% of trips, typically by ${A.declared.medianKg} kg.</li><li>Trips longer than 40 days were treated as data errors and left out of the time figures.</li></ul></div></div></div>`;
   linkSteps(document.getElementById('an-phases'), 'asis', 'ben', 'import');
 }
+
+let anResizeT = null; window.addEventListener('resize', () => { clearTimeout(anResizeT); anResizeT = setTimeout(() => { if (state.tab === 'analytics' && Math.abs(chartW().W - (state.anW || 0)) > 24) renderAnalytics(); }, 250); });
 /* ===================== stakeholder feedback: comments on steps, phases and tabs; append-only ===================== */
 const FB_KEY = 'blpa-map-feedback-v1';
+/* where the shared list lives: a full URL set in the page head, or /api/feedback on the host that serves this page; nothing when the file is opened from disk */
+const FB_API = (typeof window.BLPA_FEEDBACK_API === 'string' && window.BLPA_FEEDBACK_API.trim()) ? window.BLPA_FEEDBACK_API.trim().replace(/\/$/, '') : (/^https?:$/.test(location.protocol) ? '/api/feedback' : '');
 state.fb = { list: [], me: null, filter: 'all' };
 /* comments are kept in two places in this browser (localStorage and IndexedDB) and never deleted by the page; each load merges both copies */
 function fbDb(cb){ try { const rq = indexedDB.open('blpa-map', 1); rq.onupgradeneeded = () => rq.result.createObjectStore('kv'); rq.onsuccess = () => cb(rq.result); rq.onerror = () => cb(null); } catch (e) { cb(null); } }
 function fbDbRead(cb){ fbDb(db => { if (!db) return cb(null); try { const tx = db.transaction('kv', 'readonly'); const g = tx.objectStore('kv').get(FB_KEY); g.onsuccess = () => cb(g.result || null); g.onerror = () => cb(null); } catch (e) { cb(null); } }); }
 function fbDbWrite(payload){ fbDb(db => { if (!db) return; try { db.transaction('kv', 'readwrite').objectStore('kv').put(payload, FB_KEY); } catch (e) {} }); }
-state.fb.saved = null; state.fb.store = 'none';
+state.fb.saved = null; state.fb.store = 'none'; state.fb.shared = false; state.fb.synced = null; state.fb.syncError = ''; state.fb.unsynced = 0;
 function fbLoad(){
   try { const raw = localStorage.getItem(FB_KEY); const d = raw ? JSON.parse(raw) : {}; state.fb.list = Array.isArray(d.list) ? d.list : []; state.fb.me = d.me || null; state.fb.saved = d.saved || null; state.fb.store = raw ? 'localStorage' : 'none'; } catch (e) { state.fb.list = []; state.fb.me = null; }
   if (window.BLPA_FEEDBACK_SEED && Array.isArray(window.BLPA_FEEDBACK_SEED)) fbMerge(window.BLPA_FEEDBACK_SEED, false);
   fbDbRead(d => { if (!d) return; const n = fbMerge(Array.isArray(d.list) ? d.list : [], false); if (!state.fb.me && d.me) state.fb.me = d.me; if (n) { state.fb.store = 'recovered from the second copy'; fbSave(); fbRefresh(); } else if (state.fb.store === 'none' && state.fb.list.length) { state.fb.store = 'IndexedDB'; fbBadge(); renderFeedback(); } });
 }
+async function fbPost(c){ try { const r = await fetch(FB_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) }); return r.ok; } catch (e) { return false; } }
+async function fbPut(c){ try { const r = await fetch(`${FB_API}/${encodeURIComponent(c.id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ author: c.author, text: c.text, name: c.name, org: c.org }) }); return r.ok; } catch (e) { return false; } }
+async function fbSync(){
+  if (!FB_API) return;
+  try { const r = await fetch(FB_API, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); const d = await r.json(); const remote = Array.isArray(d.comments) ? d.comments : [];
+    const ids = new Set(remote.map(c => c.id)); const mine = state.fb.list.filter(c => !ids.has(c.id)); let failed = 0;
+    for (const c of mine) { if (!(await fbPost(c))) failed++; }
+    remote.forEach(rc => { const lc = state.fb.list.find(c => c.id === rc.id); if (lc && rc.edited && (!lc.edited || rc.edited > lc.edited)) { lc.text = rc.text; lc.name = rc.name; lc.org = rc.org; lc.edited = rc.edited; } });
+    const n = fbMerge(remote, false); state.fb.shared = true; state.fb.syncError = ''; state.fb.synced = new Date().toISOString(); state.fb.unsynced = failed;
+    fbSave(); if (n || mine.length) fbRefresh(); else renderFeedback();
+  } catch (e) { state.fb.shared = false; state.fb.syncError = String(e.message || e); renderFeedback(); }
+}
 function fbSave(){ state.fb.saved = new Date().toISOString(); const payload = { list: state.fb.list, me: state.fb.me, saved: state.fb.saved }; try { localStorage.setItem(FB_KEY, JSON.stringify(payload)); state.fb.store = 'localStorage'; } catch (e) {} fbDbWrite(payload); fbBadge(); }
 function fbCsv(){ const rows = [['Id','Time','Name','Organisation','Target type','View','Port','Direction','Step or phase','Target label','Comment','Edited']]; state.fb.list.forEach(c => rows.push([c.id, (c.time||'').replace('T',' ').slice(0,16), c.name||'', c.org||'', c.target.type, c.target.view||'', c.target.port ? (PORTS[c.target.port]?.name||c.target.port) : '', c.target.dir||'', c.target.id||'', c.target.label||'', c.text, c.edited ? (c.edited.replace('T',' ').slice(0,16)) : ''])); csvDownload(`BLPA_map_feedback_${new Date().toISOString().slice(0,10)}.csv`, rows); }
-function fbStatus(){ const n = state.fb.list.length; const when = state.fb.saved ? state.fb.saved.replace('T',' ').slice(0,16) : ''; return `<div class="fb-status"><b>${n} comment${n===1?'':'s'}</b> kept in this browser for this page${when ? `; last saved ${esc(when)}` : ''}. Comments live in the browser that wrote them: another browser, another computer, a private window, or clearing the browser's site data will not show them. Download the comments file after each session and send it back; every file is merged into the next version of the map, so nothing sent is lost.</div>`; }
+function fbStatus(){ const n = state.fb.list.length; const when = state.fb.saved ? state.fb.saved.replace('T',' ').slice(0,16) : ''; const syn = state.fb.synced ? state.fb.synced.replace('T',' ').slice(0,16) : '';
+  if (FB_API && state.fb.shared) return `<div class="fb-status ok"><b>${n} comment${n===1?'':'s'}</b>, shared. Comments are stored with the page host, so everyone who opens this link sees the same list${syn ? `; last checked ${esc(syn)}` : ''}.${state.fb.unsynced ? ` <b>${state.fb.unsynced} of your comments could not be sent yet</b>; they are kept in this browser and sent when the host is reachable again.` : ''}</div>`;
+  if (FB_API) return `<div class="fb-status"><b>${n} comment${n===1?'':'s'}</b> kept in this browser. The comment store at <code>${esc(FB_API)}</code> could not be reached${state.fb.syncError ? ` (${esc(state.fb.syncError)})` : ''}; comments written now are kept here and sent when it is back. <button type="button" class="rt-link" onclick="fbSync()">Try again</button></div>`;
+  return `<div class="fb-status"><b>${n} comment${n===1?'':'s'}</b> kept in this browser for this page${when ? `; last saved ${esc(when)}` : ''}. This copy of the map was opened from a file, so comments live only in this browser. Download the comments file after each session and send it back; every file is merged into the next version of the map. When the map is served from its host, comments are shared automatically.</div>`; }
 function fbBadge(){ const b = document.getElementById('fb-count'); if (b) b.textContent = state.fb.list.length ? String(state.fb.list.length) : ''; }
 function fbId(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function fbMe(){ if (!state.fb.me) { state.fb.me = { id: fbId(), name: '', org: '' }; } return state.fb.me; }
@@ -2880,6 +2911,7 @@ function fbSubmit(t, editId){
   if (editId) { const c = state.fb.list.find(x => x.id === editId); if (c) { c.text = text; c.name = me.name; c.org = me.org; c.edited = new Date().toISOString(); } }
   else state.fb.list.push({ id: fbId(), target: t, name: me.name, org: me.org, text, time: new Date().toISOString(), author: me.id });
   fbSave(); fbClose(); fbRefresh();
+  if (FB_API) { const c = editId ? state.fb.list.find(x => x.id === editId) : state.fb.list[state.fb.list.length - 1]; (editId ? fbPut(c) : fbPost(c)).then(ok => { state.fb.unsynced = ok ? 0 : state.fb.unsynced + 1; if (ok) { state.fb.shared = true; state.fb.synced = new Date().toISOString(); } renderFeedback(); }); }
 }
 function fbRefresh(){ renderFeedback(); if (state.activeStep) openStep(state.activeStep.view, state.activeStep.id); if (state.tab === 'asis' || state.tab === 'tobe') rerenderMaps(); }
 function fbExport(){ const me = fbMe(); const payload = { exported: new Date().toISOString(), from: me.name || 'anonymous', org: me.org || '', map: 'BLPA_Process_Map', comments: state.fb.list }; const blob = new Blob([JSON.stringify(payload, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `BLPA_map_feedback_${(me.name || 'anonymous').replace(/[^a-z0-9]+/gi, '_')}_${new Date().toISOString().slice(0, 10)}.json`; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
@@ -2891,14 +2923,14 @@ function renderFeedback(){
   const tabTarget = id => ({ type: 'tab', id, label: `Tab: ${id}` });
   const items = Object.entries(groups).map(([k, cs]) => `<h3>${esc(k)} <small>${cs.length}</small></h3>${cs.map(c => `<div class="fb-item wide"><div class="fb-meta"><button type="button" class="rt-link" onclick='fbGo(${esc(JSON.stringify(c))})'>${esc(c.target.label || c.target.id)}</button> · <b>${esc(c.name || 'Anonymous')}</b>${c.org ? ' · ' + esc(c.org) : ''} · ${esc((c.time || '').replace('T', ' ').slice(0, 16))}${c.edited ? ' · edited' : ''}${me && c.author === me.id ? ` · <button type="button" class="rt-link" onclick="fbEdit('${esc(c.id)}')">edit</button>` : ''}</div><div class="fb-text">${esc(c.text)}</div></div>`).join('')}`).join('');
   el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Feedback from stakeholders</h2>
-    <p class="body">Every step card, every phase and this page carry a <b>Comment</b> button. Comments are kept in this browser; nothing can be deleted, and you can edit your own. When you have finished, press <b>Download my comments</b> and send the file back; all files are merged into one list in the next version of the map.</p>${fbStatus()}
+    <p class="body">Every step card, every phase and this page carry a <b>Comment</b> button. Nothing can be deleted, and you can edit your own. ${FB_API && state.fb.shared ? 'Comments are shared through the page host: what you post is visible to everyone who opens this link.' : 'When you have finished, press <b>Download my comments</b> and send the file back; all files are merged into one list in the next version of the map.'}</p>${fbStatus()}
     <div class="toolbar"><div class="grp"><b>You</b><span>${me.name ? esc(me.name) + (me.org ? ' · ' + esc(me.org) : '') : '<i>name not set yet; it is asked when you post</i>'}</span></div>
       <div class="grp"><button type="button" class="rt-btn primary" onclick='fbOpen(${esc(JSON.stringify({ type: 'tab', id: 'overview', label: 'General comment on the process map' }))})'>General comment</button><button type="button" class="rt-btn" onclick="fbExport()">Download my comments (file to send back)</button><button type="button" class="rt-btn" onclick="fbCsv()">Download as CSV</button><label class="rt-btn" for="fb-file">Import a comments file</label><input id="fb-file" type="file" accept="application/json,.json" style="display:none" onchange="fbImport(this)"></div></div>
     <div class="quant-strip"><span class="q-chip">comments: <b>${state.fb.list.length}</b></span><span class="q-chip">on steps: <b>${state.fb.list.filter(c => c.target.type === 'step').length}</b></span><span class="q-chip">on phases: <b>${state.fb.list.filter(c => c.target.type === 'phase').length}</b></span><span class="q-chip">general: <b>${state.fb.list.filter(c => c.target.type === 'tab').length}</b></span><span class="q-chip">people: <b>${new Set(state.fb.list.map(c => (c.name || '') + '|' + (c.org || ''))).size}</b></span></div>
     ${items || '<p class="body muted">No comments yet. Open a step in the AS-IS or TO-BE flow and press Comment.</p>'}</div>`;
   fbBadge();
 }
-fbLoad();
+fbLoad(); if (FB_API) { fbSync(); setInterval(fbSync, 60000); document.addEventListener('visibilitychange', () => { if (!document.hidden) fbSync(); }); }
 
 renderAll();
 </script>
