@@ -382,6 +382,20 @@
       .viewport { height:auto; overflow:visible; }
       .process-panel[hidden] { display:block; }
     }
+    /* time figures, assumptions, exports */
+    .tag.t.asm, .nc .nf span.t.asm { color:#41504a; background:#f4f6f5; border:1px dashed #9aa8a0; }
+    .caveat { margin:8px 0 10px; padding:8px 12px; background:#f7f9ff; border:1px solid #cdd7ea; border-radius:9px; font-size:11.5px; color:#2b3f4f; line-height:1.45; }
+    .cond { margin-top:3px; font-size:11px; color:#7a5a00; }
+    .kpi-note { margin:2px 0 6px; font-size:11.5px; color:var(--muted); }
+    .rt-saved { font-size:11px; color:#0f5132; font-weight:700; margin-top:2px; }
+    .asum-note { margin:6px 0 0; font-size:11px; color:var(--muted); }
+    .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }
+    .tblx-bar { display:flex; justify-content:flex-end; margin:2px 0 0; }
+    .csv-link { border:none; background:none; color:#1d4ed8; font-size:11px; font-weight:700; cursor:pointer; padding:2px 4px; }
+    .csv-link:hover { text-decoration:underline; }
+    .fb-status { margin:8px 0 10px; padding:8px 12px; background:#fff8e6; border:1px solid #f0d58a; border-radius:9px; font-size:12px; color:#5a4300; line-height:1.45; }
+    .tv-sum span.meas b, .tv-sum span.chg b { font-weight:800; }
+    .retable td small, .asum-table td small, .kpi small { font-weight:600; color:var(--muted); font-size:10.5px; }
   </style>
 </head>
 <body>
@@ -431,24 +445,30 @@ function esc(v){ return String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;',
 function compact(v){ return String(v ?? '').replace(/\s+/g,' ').trim(); }
 /* ===================== time helpers ===================== */
 function fmtDur(h, days=true){ if (h==null || isNaN(h)) return ''; const m = Math.round(h*60); if (m < 60) return `${m} min`; const H = Math.floor(m/60), M = m%60; let s = `${H} h ${String(M).padStart(2,'0')} min`; if (days && h >= 24) s += ` (about ${(h/24).toFixed(1)} days)`; return s; }
+function fmtH(h){ if (h==null || isNaN(h)) return ''; if (h >= 48) return `${Math.round(h/24)} days`; if (h === 0) return '0 min'; return fmtDur(h, false); }
 function isToBe(s){ return 'asis' in s; }
 function levelClass(l){ return l==='High'?'high':l==='Medium'?'med':l==='Low'?'low':''; }
 function changeClass(c){ return (c==='Removed'||c==='Much shorter')?'drop':c==='Shorter'?'less':c==='Visible'?'vis':''; }
 function momentName(id){ return TIME.moments[id] || ('step ' + id); }
-/* role: 'end' = this step creates a recorded moment, so the time since the previous moment is measured;
-   'start' = the first recorded moment; 'within' = the step lies between two moments and is not timed on its own. */
+const TIME_CAVEAT = () => `<div class="caveat"><b>How to read the time figures.</b> ${esc(TIME.caveat)}</div>`;
+/* role: 'carry' = this step carries the measured time of a span (the step where that time is spent); 'moment' = this step creates a recorded
+   moment but the time is carried by another step; 'within' = the step lies inside a measured span; 'start' = the first recorded moment.
+   basis: measured (Benapole data), indicative (Benapole figure shown for another port), assumed (site visits), reported (a figure the port gave), '' (nothing). */
 function timeAsIs(port, dir, s){
-  const out = { basis:'', level:'', why:'', part:null, key:'', role:'' };
-  const rep = (TIME.reported[dir]||{})[s.id];
-  if (port==='ben' && dir==='import') {
-    if (TIME.endStep[s.id]) { out.key = TIME.endStep[s.id]; out.part = TIME.parts[out.key]; out.role = 'end'; out.basis = 'measured'; out.level = out.part.level; out.why = TIME.stepWhy[s.id] || out.part.why; return out; }
-    if (s.id === '2.2') { out.key = 'stay'; out.part = TIME.parts.stay; out.role = 'start'; out.basis = 'measured'; out.level = rep ? rep[0] : ''; out.why = TIME.stepWhy[s.id]; return out; }
-    if (TIME.within[s.id]) { out.key = TIME.within[s.id]; out.part = TIME.parts[out.key]; out.role = 'within'; out.why = TIME.stepWhy[s.id] || ''; }
+  const out = { basis:'', hours:null, cond:false, level:'', why:'', part:null, key:'', role:'', note:'' };
+  const rep = (TIME.reported[dir]||{})[s.id]; const est = (TIME.est[dir]||{})[s.id];
+  if (dir==='import') {
+    const ck = TIME.carry[s.id];
+    if (ck) { const p = TIME.parts[ck]; out.key = ck; out.part = p; out.role = 'carry'; out.hours = p.typical; out.level = p.level; out.basis = port==='ben' ? 'measured' : 'indicative'; out.why = TIME.stepWhy[s.id] || p.why; return out; }
+    if (s.id === '2.2') { out.key = 'stay'; out.part = TIME.parts.stay; out.role = 'start'; if (est) { out.basis = 'assumed'; out.hours = est[0]; out.note = est[2]; } out.level = rep ? rep[0] : ''; out.why = TIME.stepWhy[s.id]; return out; }
+    if (TIME.within[s.id]) { const k = TIME.within[s.id]; out.key = k; out.part = TIME.parts[k]; out.role = TIME.parts[k].to === s.id ? 'moment' : 'within'; out.why = TIME.stepWhy[s.id] || ''; if (rep) { out.level = rep[0]; out.why = rep[1] + (out.why ? ' ' + out.why : ''); } return out; }
   }
-  if (rep) { out.basis = 'reported'; out.level = rep[0]; out.why = rep[1] + (out.why && out.role==='within' ? ' ' + out.why : ''); }
-  else if (s.queue || s.revisit) { out.basis = 'reported'; out.level = s.queue ? 'Medium' : 'Low'; out.why = [s.queue?`A queue forms here: ${s.queue}.`:'', s.revisit?`Someone comes back to a place already visited: ${s.revisit}.`:''].filter(Boolean).join(' '); }
+  if (est) { out.basis = est[1]; out.hours = est[0]; out.cond = !!est[3]; out.note = est[2]; out.level = rep ? rep[0] : ''; out.why = rep ? rep[1] : est[2]; return out; }
+  if (rep) { out.basis = 'reported'; out.level = rep[0]; out.why = rep[1]; return out; }
+  if (s.queue || s.revisit) { out.basis = 'reported'; out.level = s.queue ? 'Medium' : 'Low'; out.why = [s.queue?`A queue forms here: ${s.queue}.`:'', s.revisit?`Someone comes back to a place already visited: ${s.revisit}.`:''].filter(Boolean).join(' '); }
   return out;
 }
+function hoursOf(t){ return (t && t.hours != null && !t.cond && t.basis && t.basis !== 'reported') ? t.hours : 0; }
 function timeToBe(port, dir, s){
   const e = (TIME.tobe[dir]||{})[s.id]; const a = s.asis ? stepById(resolveSteps('asis', dir, port), s.asis) : null;
   let change, expect;
@@ -456,57 +476,87 @@ function timeToBe(port, dir, s){
   else if (/\(unchanged/i.test(s.title||'') || !s.change) { change = 'Same'; expect = 'As today.'; }
   else if (a && a.manual && !s.manual) { change = 'Shorter'; expect = 'The paper handling at this step disappears.'; }
   else { change = 'Same'; expect = ''; }
-  return { change, expect, today: a ? timeAsIs(port, dir, a) : null, asisId: s.asis };
+  const today = a ? timeAsIs(port, dir, a) : null; let hours = null, cond = false, how = '';
+  if (today && today.role === 'carry') { if (TIME.afterAt[today.key] != null && change !== 'Same') { hours = TIME.afterAt[today.key]; how = `today's quickest quarter of trucks (${fmtH(hours)}) taken as the target`; } else { hours = today.hours; how = 'as today: physical work; the pilot sets the target'; } }
+  else if (today && today.hours != null && today.basis) { const f = TIME.afterRule[change] ?? 1; hours = today.hours * f; cond = today.cond; how = f === 0 ? 'the step disappears' : f === 1 ? 'as today' : `${f === 0.25 ? 'a quarter' : 'half'} of today's ${fmtH(today.hours)}, by rule`; }
+  else if (!a && TIME.tobeNew[dir] && TIME.tobeNew[dir][s.id] != null) { hours = TIME.tobeNew[dir][s.id]; how = 'new step, assumed'; }
+  if (hours != null && hours > 0 && !(today && today.role === 'carry')) hours = Math.max(5 / 60, Math.round(hours * 12) / 12);
+  return { change, expect, today, asisId: s.asis, hours, cond, how, role: today ? today.role : '' };
 }
+function hoursAfter(tt){ return (tt && tt.hours != null && !tt.cond) ? tt.hours : 0; }
+/* totals for a set of AS-IS steps and the TO-BE steps that replace them; a removed AS-IS step counts 0 after */
+function timeTotals(port, dir, asisSteps, tobeSteps){
+  const r = { measured:0, indicative:0, assumed:0, today:0, after:0, cond:[], carries:[], nToday:0, nAfter:0 };
+  (asisSteps||[]).forEach(s => { const t = timeAsIs(port, dir, s); if (t.cond && t.hours != null) r.cond.push({ id:s.id, hours:t.hours, basis:t.basis }); const h = hoursOf(t); if (!h) return; r.nToday++; if (t.basis === 'measured') { r.measured += h; r.carries.push(s.id); } else if (t.basis === 'indicative') { r.indicative += h; r.carries.push(s.id); } else r.assumed += h; });
+  r.today = r.measured + r.indicative + r.assumed;
+  (tobeSteps||[]).forEach(s => { const tt = timeToBe(port, dir, s); const h = hoursAfter(tt); if (tt.hours != null && !tt.cond) r.nAfter++; r.after += h; });
+  return r;
+}
+function fmtToday(r){ if (!r.today) return r.cond.length ? '<span class="muted">nothing timed; see the conditional steps</span>' : '<span class="muted">nothing timed</span>'; const parts = []; if (r.measured) parts.push(`${fmtH(r.measured)} measured`); if (r.indicative) parts.push(`${fmtH(r.indicative)} Benapole figure`); if (r.assumed) parts.push(`${fmtH(r.assumed)} assumed`); return `<b>about ${esc(fmtH(r.today))}</b>${parts.length > 1 || !r.measured ? ` <small>(${esc(parts.join(' + '))})</small>` : ' <small>(measured)</small>'}`; }
+function fmtAfter(r){ return r.nAfter || r.today ? `<b>about ${esc(fmtH(r.after))}</b> <small>(assumed)</small>` : '<span class="muted">nothing timed</span>'; }
+function fmtCond(r){ return r.cond.length ? `<div class="cond">${r.cond.map(c => `+ ${esc(fmtH(c.hours))} at ${esc(c.id)} when it applies (${esc(c.basis)})`).join('; ')}</div>` : ''; }
 function timeChip(s, port, dir){
   port = port || state.port; dir = dir || state.dir;
-  if (isToBe(s)) { const t = timeToBe(port, dir, s); return (t.change==='Same'||t.change==='Outside BLPA') ? '' : `<span class="t ${changeClass(t.change)}">time: ${esc(t.change)}</span>`; }
+  if (isToBe(s)) { const t = timeToBe(port, dir, s); if (t.change==='Same' || t.change==='Outside BLPA') return ''; return `<span class="t ${changeClass(t.change)}">${esc(t.change.toLowerCase())}${t.hours != null && t.hours > 0 && !t.cond ? ` · about ${esc(fmtH(t.hours))}` : ''}</span>`; }
   const t = timeAsIs(port, dir, s);
-  if (t.role==='end') return `<span class="t ${levelClass(t.level)}" title="${esc('Measured since ' + momentName(t.part.frm) + ' (step ' + t.part.frm + ')')}">time +${esc(fmtDur(t.part.typical,false))} · ${esc(t.level)}</span>`;
-  if (t.role==='start') return `<span class="t" title="The measured stay starts at this moment">timing starts</span>`;
-  if (t.basis==='reported') return `<span class="t ${levelClass(t.level)}">wait ${esc(t.level)} (reported)</span>`;
+  if (t.role==='carry') return `<span class="t ${levelClass(t.level)}" title="${esc(t.part.label + ': the time is spent at this step')}">${esc(fmtH(t.hours))} ${t.basis === 'measured' ? 'measured' : 'Benapole figure'}</span>`;
+  if (t.role==='start') return `<span class="t" title="The measured stay starts at this moment">timing starts${t.hours != null ? ` · about ${esc(fmtH(t.hours))}` : ''}</span>`;
+  if (t.basis==='assumed') return `<span class="t asm" title="${esc(t.note)}">about ${esc(fmtH(t.hours))} assumed${t.cond ? ', when it applies' : ''}</span>`;
+  if (t.basis==='reported' && t.hours != null) return `<span class="t ${levelClass(t.level)}" title="${esc(t.note)}">${esc(fmtH(t.hours))} or more, reported</span>`;
   return '';
 }
 function timeSummary(t){
-  if (!t) return 'no wait reported here and not timed by the data';
-  if (t.role==='end') return `${momentName(t.part.to)} comes typically ${fmtDur(t.part.typical)} after ${momentName(t.part.frm)} (${t.level})`;
-  if (t.role==='start') return `the measured stay starts here; the whole stay is typically ${fmtDur(t.part.typical)}`;
-  if (t.role==='within') return `inside the span from ${momentName(t.part.frm)} to ${momentName(t.part.to)} (typically ${fmtDur(t.part.typical)} as a whole, ${t.part.level}); not timed on its own` + (t.basis==='reported' ? `; reported ${t.level}` : '');
-  if (t.basis==='reported') return `${t.level} wait, reported (not yet measured)`;
-  return 'no wait reported here and not timed by the data';
+  if (!t || !t.basis && !t.role) return 'not timed';
+  if (t.role==='carry') return `${fmtH(t.hours)} ${t.basis === 'measured' ? 'measured' : 'Benapole figure'} (${t.part.label.toLowerCase()})`;
+  if (t.role==='start') return `the measured stay starts here${t.hours != null ? `; about ${fmtH(t.hours)} assumed for the typing` : ''}`;
+  if (t.role==='within' || t.role==='moment') return `inside the ${fmtH(t.part.typical)} carried at step ${t.part.at}`;
+  if (t.basis==='assumed') return `about ${fmtH(t.hours)} assumed${t.cond ? ' when it applies' : ''}`;
+  if (t.basis==='reported') return t.hours != null ? `${fmtH(t.hours)} or more, reported${t.cond ? ', when it applies' : ''}` : 'wait reported, not timed';
+  return 'not timed';
 }
 function timeBoxHtml(view, s){
   const src = `${TIME.meta.label}: ${TIME.meta.trips.toLocaleString()} Indian trucks`;
   const tag = l => l ? `<span class="tag t ${levelClass(l)}">${esc(l)}</span>` : '';
   if (view==='asis') {
     const t = timeAsIs(state.port, state.dir, s); const p = t.part;
-    if (t.role==='end') { const others = p.steps.filter(x => x !== s.id); return `<div class="timebox"><b>Time today</b> · measured (${esc(src)}). This step creates a recorded moment, <b>${esc(momentName(p.to))}</b>. It comes typically <b>${esc(fmtDur(p.typical))}</b> after ${esc(momentName(p.frm))} (step ${esc(p.frm)}); one truck in ten waits more than <b>${esc(fmtDur(p.slow))}</b>; ${p.share}% of the average stay. Rating ${tag(t.level)}${others.length?`<br>Steps ${esc(others.join(', '))} happen inside that span and are not timed separately.`:''}<br>${esc(t.why)}</div>`; }
-    if (t.role==='start') return `<div class="timebox"><b>Time today</b> · measured (${esc(src)}). The measured stay starts at this moment. An Indian truck typically stays <b>${esc(fmtDur(p.typical))}</b> from gate in to gate out; one truck in ten stays more than <b>${esc(fmtDur(p.slow))}</b>; ${p.over24}% stay more than a day. ${tag(t.level)}<br>${esc(t.why)}</div>`;
-    if (t.role==='within') return `<div class="timebox"><b>Time today</b> · not timed on its own. This step happens between two recorded moments, ${esc(momentName(p.frm))} (step ${esc(p.frm)}) and ${esc(momentName(p.to))} (step ${esc(p.to)}). The data times that span as a whole, typically <b>${esc(fmtDur(p.typical))}</b> (rated ${tag(p.level)}), but cannot say how much of it belongs to this step.${t.basis==='reported'?` Reported wait here: ${tag(t.level)}`:''}<br>${esc(t.why)}</div>`;
-    if (t.basis==='reported') return `<div class="timebox"><b>Time today</b> · reported, not yet measured. Rating ${tag(t.level)}<br>${esc(t.why)}</div>`;
-    return `<div class="timebox muted"><b>Time today</b> · no wait reported at this step and nothing timed here by the data.</div>`;
+    if (t.role==='carry') { const others = p.steps.filter(x => x !== s.id); return `<div class="timebox"><b>Time today</b> · ${t.basis === 'measured' ? `measured (${esc(src)})` : 'Benapole figure, shown as indicative for this port'}. This step carries the time from ${esc(momentName(p.frm))} (step ${esc(p.frm)}) to ${esc(momentName(p.to))} (step ${esc(p.to)}): typically <b>${esc(fmtDur(p.typical))}</b>; one truck in ten more than <b>${esc(fmtDur(p.slow))}</b>; ${p.share}% of the average stay. Rating ${tag(t.level)}${others.length?`<br>Steps ${esc(others.join(', '))} happen inside that span and carry no time of their own.`:''}<br>${esc(t.why)}</div>`; }
+    if (t.role==='start') return `<div class="timebox"><b>Time today</b> · the measured stay starts at this moment. An Indian truck typically stays <b>${esc(fmtDur(p.typical))}</b> from gate in to gate out; one truck in ten more than <b>${esc(fmtDur(p.slow))}</b>; ${p.over24}% stay more than a day.${t.hours != null ? ` The typing itself is assumed at about ${esc(fmtH(t.hours))}.` : ''}<br>${esc(t.why)}</div>`;
+    if (t.role==='within' || t.role==='moment') return `<div class="timebox"><b>Time today</b> · no figure of its own. This step lies between ${esc(momentName(p.frm))} (step ${esc(p.frm)}) and ${esc(momentName(p.to))} (step ${esc(p.to)}); that span is typically <b>${esc(fmtDur(p.typical))}</b> and is carried by step ${esc(p.at)}, where the time is spent.${t.role==='moment' ? ' The recorded moment is created here.' : ''}${t.level?` Reported wait here: ${tag(t.level)}`:''}<br>${esc(t.why)}</div>`;
+    if (t.basis==='assumed') return `<div class="timebox"><b>Time today</b> · <b>about ${esc(fmtH(t.hours))}</b>, assumed${t.cond ? ' (only when this step applies; not counted in totals)' : ''}. Not in the truck data; the figure comes from site visits and interviews and is to be validated. ${tag(t.level)}<br>${esc(t.why)}</div>`;
+    if (t.basis==='reported') return `<div class="timebox"><b>Time today</b> · ${t.hours != null ? `<b>${esc(fmtH(t.hours))} or more</b>, reported by the port${t.cond ? ' (only when this step applies; not counted in totals)' : ''}` : 'a wait reported by the port, not timed'}. ${tag(t.level)}<br>${esc(t.why)}</div>`;
+    return `<div class="timebox muted"><b>Time today</b> · not timed and no wait reported at this step.</div>`;
   }
   const t = timeToBe(state.port, state.dir, s);
   const today = t.today ? `Today (step ${esc(t.asisId)}): ${esc(timeSummary(t.today))}.` : 'New step: nothing to compare with today.';
-  return `<div class="timebox"><b>Time</b> · ${today} <b>Expected after paperless: <span class="tag t ${changeClass(t.change)||'same'}">${esc(t.change)}</span></b>${t.expect?` ${esc(t.expect)}`:''}</div>`;
+  return `<div class="timebox"><b>Time</b> · ${today} <b>After paperless: <span class="tag t ${changeClass(t.change)||'same'}">${esc(t.change)}</span></b>${t.hours != null ? ` about <b>${esc(fmtH(t.hours))}</b> assumed (${esc(t.how)})` : ''}${t.expect?`<br>${esc(t.expect)}`:''}</div>`;
 }
 function phaseTimeLine(view, ps){
+  const port = state.port, dir = state.dir;
   if (view==='asis') {
-    const ends = [], withins = new Set(), reported = []; let start = '';
-    ps.forEach(s => { const t = timeAsIs(state.port, state.dir, s);
-      if (t.role==='end') ends.push(`${momentName(t.part.to)} (${s.id}) comes typically ${fmtDur(t.part.typical,false)} after ${momentName(t.part.frm)} (${t.part.frm}); one truck in ten waits more than ${fmtDur(t.part.slow,false)} (${t.level})`);
-      else if (t.role==='start') start = `the measured stay starts at ${s.id}; a truck typically stays ${fmtDur(t.part.typical,false)} in the port`;
-      else if (t.role==='within') withins.add(t.key);
-      if (t.basis==='reported' && (t.level==='High'||t.level==='Medium')) reported.push(`${s.id} ${t.level}`); });
-    const parts = []; if (start) parts.push(start); parts.push(...ends);
-    [...withins].filter(k => !ends.some(e => e.includes(`(${TIME.parts[k].to})`))).forEach(k => { const p = TIME.parts[k]; parts.push(`steps in this phase lie inside the span from ${momentName(p.frm)} (${p.frm}) to ${momentName(p.to)} (${p.to}), typically ${fmtDur(p.typical,false)} as a whole (${p.level}); they are not timed on their own`); });
-    const m = parts.length ? parts.join('; ') : (state.port==='ben' && state.dir==='import' ? 'nothing timed by the data in this phase' : 'no data yet for this flow');
-    return `<p class="io tm"><b>Time today:</b> ${esc(m)}${reported.length?`; reported waits at ${esc(reported.join(', '))}`:''}.</p>`;
+    const carries = [], assumed = [], cond = [], withins = new Set(); let start = '';
+    ps.forEach(s => { const t = timeAsIs(port, dir, s);
+      if (t.role==='carry') carries.push(`${fmtH(t.hours)} ${t.basis === 'measured' ? 'measured' : 'Benapole figure'} at ${s.id} (${t.part.label.toLowerCase()})`);
+      else if (t.role==='start') start = `the measured stay starts at ${s.id}; a truck typically stays ${fmtH(t.part.typical)} in the port`;
+      else if (t.role==='within' || t.role==='moment') withins.add(t.part.at);
+      if (t.basis !== 'reported' && t.hours != null && t.role !== 'carry' && t.role !== 'start') (t.cond ? cond : assumed).push({ id: s.id, hours: t.hours });
+      else if (t.basis === 'reported' && t.hours != null) cond.push({ id: s.id, hours: t.hours }); });
+    const parts = []; if (start) parts.push(start); parts.push(...carries);
+    const aSum = assumed.reduce((n, x) => n + x.hours, 0); if (aSum) parts.push(`about ${fmtH(aSum)} assumed across ${assumed.map(x => x.id).join(', ')}`);
+    [...withins].filter(id => !ps.some(s => s.id === id)).forEach(id => parts.push(`the other steps sit inside the time carried at ${id}`));
+    if (cond.length) parts.push(`when it applies: ${cond.map(x => `${fmtH(x.hours)} at ${x.id}`).join(', ')} (not in the totals)`);
+    const m = parts.length ? parts.join('; ') : 'nothing timed and nothing assumed in this phase';
+    return `<p class="io tm"><b>Time today:</b> ${esc(m)}.</p>`;
   }
-  const c = {}; ps.forEach(s => { const t = timeToBe(state.port, state.dir, s); c[t.change] = (c[t.change]||0) + 1; });
-  const parts = ['Removed','Much shorter','Shorter','Visible'].filter(k=>c[k]).map(k => `${c[k]} ${k.toLowerCase()}`);
-  return `<p class="io tm"><b>Expected after paperless:</b> ${parts.length ? esc(parts.join(', ')) + '; the rest as today' : 'as today (physical work or another agency\'s step)'}.</p>`;
+  const A = resolveSteps('asis', dir, port); const asisSteps = ps.map(s => s.asis ? stepById(A, s.asis) : null).filter(Boolean);
+  const r = timeTotals(port, dir, asisSteps, ps); const c = {}; ps.forEach(s => { const t = timeToBe(port, dir, s); c[t.change] = (c[t.change]||0) + 1; });
+  const kinds = ['Removed','Much shorter','Shorter','Visible'].filter(k=>c[k]).map(k => `${c[k]} ${k.toLowerCase()}`);
+  return `<p class="io tm"><b>After paperless:</b> ${r.today || r.after ? `about ${esc(fmtH(r.after))} assumed, against about ${esc(fmtH(r.today))} today` : 'nothing timed in this phase'}${kinds.length ? `; ${esc(kinds.join(', '))}` : ''}.</p>`;
 }
+/* ===================== CSV export ===================== */
+function csvDownload(name, rows){ const cell = v => '"' + String(v ?? '').replace(/"/g,'""').replace(/\s+/g,' ').trim() + '"'; const blob = new Blob(['﻿' + rows.map(r => r.map(cell).join(',')).join('\r\n')], { type:'text/csv;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 800); }
+function tableCsv(btn, name){ const t = btn.closest('.tblx').querySelector('table'); const rows = [...t.querySelectorAll('tr')].map(tr => [...tr.children].map(td => (td.innerText || td.textContent).replace(/\s+/g,' ').trim())); csvDownload(name, rows); }
+function xtable(headers, rows, minw, name){ return `<div class="tblx"><div class="tblx-bar"><button type="button" class="csv-link" onclick="tableCsv(this,'${esc(name)}.csv')">Download this table (CSV)</button></div>${table(headers, rows, minw)}</div>`; }
+function xwrap(html, name){ return `<div class="tblx"><div class="tblx-bar"><button type="button" class="csv-link" onclick="tableCsv(this,'${esc(name)}.csv')">Download this table (CSV)</button></div>${html}</div>`; }
 
 const CLIENT_MODE = true;   // hides the internal validation questions and counters from the shared page
 const state = { tab:'overview', port:'ben', dir:'import', mode:'phase', actor:'all', doc:'', scale:{asis:1, tobe:1}, spagPort:'ben', trav:'all', reviewer:false, activeStep:null };
@@ -668,14 +718,29 @@ function totalsOf(steps){
   let handoffs = 0; for (let i=1;i<steps.length;i++) if (steps[i].actor !== steps[i-1].actor) handoffs++;
   return { steps:steps.length, manual:steps.filter(s=>s.manual).length, docs:steps.reduce((a,s)=>a+(s.docs||[]).length,0), signs:steps.reduce((a,s)=>a+(s.signs||[]).length,0), handoffs, revisits:steps.filter(s=>s.revisit).length, queues:steps.filter(s=>s.queue).length, decisions:steps.filter(s=>s.decision).length, validate:steps.filter(s=>s.validate).length, changed:steps.filter(s=>s.change).length, hot:steps.filter(s=>!isToBe(s) && timeAsIs(state.port,state.dir,s).level==='High').length, drop:steps.filter(s=>isToBe(s) && ['Removed','Much shorter'].includes(timeToBe(state.port,state.dir,s).change)).length, actors:new Set(steps.map(s=>s.actor).filter(a=>a!=='sys')).size };
 }
-function kpiHtml(view, steps){
-  const t = totalsOf(steps);
+function kpiHtml(view, steps, actorKey){
+  const port = state.port, dir = state.dir; const focus = actorKey && actorKey !== 'all';
+  const mine = focus ? steps.filter(s => s.actor === actorKey) : steps; const t = totalsOf(mine);
   const k = (v,l,c='') => `<div class="kpi ${c}"><b>${v}</b><span>${l}</span></div>`;
-  let h = k(t.steps,'steps') + k(t.actors,'actors involved') + k(t.manual,'manual or paper steps','hot') + k(t.docs,'times a paper document is presented, produced or carried','hot') + k(t.signs,'signatures and stamps','hot') + k(t.handoffs,'handoffs between actors') + k(t.revisits,'returns to a counter already visited','hot') + k(t.queues,'places a queue forms','hot') + k(t.decisions,'decision points') + (CLIENT_MODE ? '' : k(t.validate,'questions to validate'));
-  if (view==='tobe') h += k(t.changed,'steps that change','chg') + k(t.drop,'steps where waiting is removed or much shorter','chg');
-  else if (state.port==='ben' && state.dir==='import') { const p = TIME.parts.stay; h += k(esc(fmtDur(p.typical,false)),'typical stay of an Indian truck, gate in to gate out (one month of data)','hot') + k(esc(fmtDur(p.slow,false)),'slow cases: one truck in ten stays longer than this','hot') + k(t.hot,'steps rated High for waiting (measured or reported)','hot'); }
-  else h += k(t.hot,'steps rated High for waiting (reported; no data for this flow yet)','hot');
-  return `<div class="kpi-grid">${h}</div>`;
+  const A = view==='asis' ? mine : resolveSteps('asis', dir, port).filter(a => mine.some(s => s.asis === a.id));
+  const T = view==='tobe' ? mine : resolveSteps('tobe', dir, port).filter(x => x.asis && mine.some(s => s.id === x.asis));
+  const r = timeTotals(port, dir, A, T);
+  const todayK = () => k(r.today ? `about ${esc(fmtH(r.today))}` : 'not timed', `time in ${focus ? 'these' : 'the mapped'} steps today${r.today ? ` (${[r.measured?esc(fmtH(r.measured))+' measured':'', r.indicative?esc(fmtH(r.indicative))+' Benapole figure':'', r.assumed?esc(fmtH(r.assumed))+' assumed':''].filter(Boolean).join(' + ')})` : ''}`, 'hot');
+  const afterK = () => k(r.today || r.after ? `about ${esc(fmtH(r.after))}` : 'not timed', 'after paperless, assumed', 'chg');
+  let h = '';
+  if (focus) {
+    const name = actorLabel(actorKey); const edges = edgesFor(steps); const ids = new Set(mine.map(s => s.id)); const others = new Set(); let links = 0;
+    edges.forEach(e => { const fa = e.from.replace(/^D:/,''), tb = e.to; if (tb.startsWith('D:')) return; const sa = stepById(steps, fa), sb = stepById(steps, tb); if (!sa || !sb) return; if (ids.has(fa) && !ids.has(tb)) { others.add(sb.actor); links++; } else if (ids.has(tb) && !ids.has(fa)) { others.add(sa.actor); links++; } });
+    const phases = new Set(mine.map(s => s.phase)); const sysN = mine.filter(s => s.sys).length;
+    h = k(t.steps, `steps by ${esc(name)}`) + k(`${phases.size} of ${phaseList(dir).length}`, 'phases this actor is involved in') + k(links, `handoffs with ${others.size} other actor${others.size===1?'':'s'}`) + k(t.manual, 'manual or paper steps', 'hot') + k(t.docs, 'times a document is handled', 'hot') + k(t.signs, 'signatures and stamps', 'hot') + k(sysN, 'steps that create a system record (timestamp)') + k(t.queues, 'places a queue forms', 'hot');
+    if (view==='asis') h += todayK() + afterK(); else h += k(t.changed, 'steps that change', 'chg') + afterK() + todayK();
+    return `<div class="kpi-grid">${h}</div><p class="kpi-note">Counts and times above follow the actor filter: ${esc(name)} only. Choose "All actors" for the whole flow.${fmtCond(r)}</p>`;
+  }
+  h = k(t.steps,'steps') + k(t.actors,'actors involved') + k(t.manual,'manual or paper steps','hot') + k(t.docs,'times a paper document is presented, produced or carried','hot') + k(t.signs,'signatures and stamps','hot') + k(t.handoffs,'handoffs between actors') + k(t.revisits,'returns to a counter already visited','hot') + k(t.queues,'places a queue forms','hot') + k(t.decisions,'decision points') + (CLIENT_MODE ? '' : k(t.validate,'questions to validate'));
+  if (view==='tobe') h += k(t.changed,'steps that change','chg') + k(t.drop,'steps where waiting is removed or much shorter','chg') + afterK() + todayK();
+  else if (port==='ben' && dir==='import') { const p = TIME.parts.stay; h += k(esc(fmtDur(p.typical,false)),'typical stay of an Indian truck, gate in to gate out (one month of data)','hot') + k(esc(fmtDur(p.slow,false)),'slow cases: one truck in ten stays longer than this','hot') + todayK() + afterK(); }
+  else h += todayK() + afterK();
+  return `<div class="kpi-grid">${h}</div>${fmtCond(r) ? `<p class="kpi-note">${fmtCond(r)}</p>` : ''}`;
 }
 function miniStrip(view, steps){
   const t = totalsOf(steps); const c = (l,v,cls='') => `<span class="q-chip ${cls}">${l}: <b>${v}</b></span>`;
@@ -721,7 +786,7 @@ function renderView(view){
   const port = PORTS[state.port]; const steps = resolveSteps(view, state.dir, state.port);
   const intro = FLOW_INTRO[view][state.dir][state.port] || FLOW_INTRO[view][state.dir].all || '';
   const el = document.getElementById(`${view}-panel`);
-  const head = `<div class="card" style="margin-top:8px"><h2>${view==='asis'?'AS-IS: what happens today':'TO-BE: the paperless process'} · ${esc(state.dir==='import'?'Import':'Export')} · ${esc(port.name)}</h2><p class="body">${esc(intro)}</p>${view==='tobe'?'<div class="note-draft"><b>Work in progress.</b> The paperless process shown here is a proposal for discussion and validation with BLPA and the agencies. It is not a final design; every step is open to comment.</div>':''}${toolbarHtml(view, steps)}${kpiHtml(view, steps)}</div>`;
+  const head = `<div class="card" style="margin-top:8px"><h2>${view==='asis'?'AS-IS: what happens today':'TO-BE: the paperless process'} · ${esc(state.dir==='import'?'Import':'Export')} · ${esc(port.name)}</h2><p class="body">${esc(intro)}</p>${view==='tobe'?'<div class="note-draft"><b>Work in progress.</b> The paperless process shown here is a proposal for discussion and validation with BLPA and the agencies. It is not a final design; every step is open to comment.</div>':''}${toolbarHtml(view, steps)}${kpiHtml(view, steps, state.actor)}</div>`;
   let body = '';
   if (state.mode==='full') body = renderFull(view, steps);
   else if (state.mode==='phase') body = renderByPhase(view, steps);
@@ -769,13 +834,13 @@ function phaseActorLine(view, ps, p){
   const TRAV = { cf: ['cf'], drv: ['itruck', 'driver', 'ltruck'] }; const tk = TRAV[key] || []; const sp = SPAG[port]; let moves = 0; const places = new Set();
   if (sp && dir === 'import' && view === 'asis') sp.travellers.forEach(t => { if (!tk.includes(t.key)) return; t.moves.forEach(m => { if (ids.has(m.step)) { moves++; places.add(m.from); places.add(m.to); } }); });
   const docs = ps.reduce((n, s) => n + (s.docs||[]).length, 0), signs = ps.reduce((n, s) => n + (s.signs||[]).length, 0), paper = ps.filter(s => s.manual).length;
-  let measured = 0; const seen = new Set(); const waits = { High: 0, Medium: 0 }; let drop = 0;
-  ps.forEach(s => { if (view === 'asis') { const x = timeAsIs(port, dir, s); if (x.role === 'end' && !seen.has(x.key)) { seen.add(x.key); measured += x.part.typical; } if (x.level === 'High' || x.level === 'Medium') waits[x.level]++; } else { const c = timeToBe(port, dir, s).change; if (c === 'Removed' || c === 'Much shorter') drop++; } });
+  const A = view === 'asis' ? ps : resolveSteps('asis', dir, port).filter(a => ps.some(s => s.asis === a.id));
+  const T = view === 'tobe' ? ps : resolveSteps('tobe', dir, port).filter(x => x.asis && ps.some(s => s.id === x.asis));
+  const r = timeTotals(port, dir, A, T); let drop = 0; if (view === 'tobe') ps.forEach(s => { const c = timeToBe(port, dir, s).change; if (c === 'Removed' || c === 'Much shorter') drop++; });
   const parts = [`${ps.length} step${ps.length===1?'':'s'}`, `${paper} on paper`, `${docs} document${docs===1?'':'s'} handled`, `${signs} signature${signs===1?'':'s'}`];
   if (tk.length && view === 'asis') parts.push(`${moves} move${moves===1?'':'s'} between ${places.size} places`);
-  if (view === 'asis') { if (measured) parts.push(`${fmtDur(measured, false)} measured time closed in this phase`); if (waits.High || waits.Medium) parts.push(`waits: ${waits.High} High, ${waits.Medium} Medium`); }
-  else parts.push(`${drop} step${drop===1?'':'s'} where the wait is removed or much shorter`);
-  return `<div class="phase-sum"><b>Phase ${p.n} for ${esc(actorLabel(key))}:</b> ${esc(parts.join(' · '))}</div>`;
+  if (view === 'tobe') parts.push(`${drop} step${drop===1?'':'s'} where the wait is removed or much shorter`);
+  return `<div class="phase-sum"><b>Phase ${p.n} for ${esc(actorLabel(key))}:</b> ${esc(parts.join(' · '))} · time in these steps today: ${fmtToday(r)} · after paperless: ${fmtAfter(r)}${fmtCond(r)}</div>`;
 }
 
 /* ===================== interactions ===================== */
@@ -840,7 +905,7 @@ function closeDrawer(){ document.getElementById('drawer').classList.remove('open
 function table(headers, rows, minw){ return `<div class="table-wrap"><table ${minw?`style="min-width:${minw}px"`:''}><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`; }
 function renderActors(){
   const rows = ACTORS.filter(a=>a.key!=='sys').map(a=>`<tr><td class="k">${esc(a.label)}</td><td>${esc(a.does)}</td><td>${esc(a.paper)}</td><td>${esc(a.systems)}</td><td>${esc(a.needs)}</td></tr>`);
-  document.getElementById('actors-panel').innerHTML = `<div class="card"><h2>Actors: who does what today, and what each one needs to see</h2><p>One row per lane in the map. "What they need to see" is what the actor cannot see today and would need in an integrated system; it is our understanding to be validated, not agreed scope. For the step-by-step flow of one actor, open the AS-IS or TO-BE tab and choose "By actor".</p>${table(['Actor','What they do today','Paper they handle','Systems they use','What they need to see but cannot today'], rows, 1300)}</div>`;
+  document.getElementById('actors-panel').innerHTML = `<div class="card"><h2>Actors: who does what today, and what each one needs to see</h2><p>One row per lane in the map. "What they need to see" is what the actor cannot see today and would need in an integrated system; it is our understanding to be validated, not agreed scope. For the step-by-step flow of one actor, open the AS-IS or TO-BE tab and choose "By actor".</p>${xtable(['Actor','What they do today','Paper they handle','Systems they use','What they need to see but cannot today'], rows, 1300, 'BLPA_actors')}</div>`;
 }
 function renderDocuments(){
   const rows = Object.entries(DOCS).map(([k,d]) => {
@@ -850,7 +915,7 @@ function renderDocuments(){
     const signs = new Set(); ['import','export'].forEach(dir => Object.keys(PORTS).forEach(port => resolveSteps('asis',dir,port).forEach(s => (s.signs||[]).forEach(x => { if (x.on===k) signs.add(`${x.by}: ${x.type||'signs'} (${dir} ${s.id})`); }))));
     return `<tr id="doc-${k}"><td class="k">${esc(d.name)}</td><td>${esc(d.what)}</td><td>${esc(d.issuer)}</td><td>${esc(d.data)}</td><td>${esc(useList||'none')}</td><td>${[...signs].map(esc).join('<br>')||'none'}</td><td>${esc(d.tobe)}</td><td>${esc(d.owner)}</td></tr>`;
   });
-  document.getElementById('documents-panel').innerHTML = `<div class="card"><h2>Documents: every paper item, what it carries, where it is handled, and what replaces it</h2><p>The "handled at" column is derived from the AS-IS steps, so it stays consistent with the map.</p>${table(['Document','What it is (plain words)','Issued by','Information it carries','Handled at (AS-IS steps: presented, produced, carried, filed)','Signed or stamped by','Paperless replacement (TO-BE)','Whose decision'], rows, 1600)}</div>`;
+  document.getElementById('documents-panel').innerHTML = `<div class="card"><h2>Documents: every paper item, what it carries, where it is handled, and what replaces it</h2><p>The "handled at" column is derived from the AS-IS steps, so it stays consistent with the map.</p>${xtable(['Document','What it is (plain words)','Issued by','Information it carries','Handled at (AS-IS steps: presented, produced, carried, filed)','Signed or stamped by','Paperless replacement (TO-BE)','Whose decision'], rows, 1600, 'BLPA_documents')}</div>`;
 }
 function renderChanges(){
   const rows = RULES.map(r=>`<tr id="rule-${esc(r.id)}"><td class="k">${esc(r.id)}</td><td><span class="chip-list"><span class="ct-${esc(r.type)}">${esc(r.type)}</span></span></td><td>${esc(r.today)}</td><td>${esc(r.why)}</td><td>${esc(r.change)}</td><td>${esc(r.owner)}</td><td>${esc(r.enables)}</td><td class="${r.priority==='Blocking'?'blocking':'detail-only'}">${esc(r.priority)}</td><td class="rv">${esc(r.src)}</td></tr>`);
@@ -858,12 +923,12 @@ function renderChanges(){
   ['import','export'].forEach(dir => FLOWS.tobe[dir].forEach(s => { if (s.change) (byType[s.change.type] = byType[s.change.type] || []).push({dir, s}); }));
   const typeCards = Object.entries(CHANGE_TYPES).map(([ty, d]) => `<div class="legend-box"><h4><span class="chip-list"><span class="ct-${ty}">${esc(ty)}</span></span> ${esc(d.label)}</h4><p style="margin:4px 0 6px;font-size:12px;color:#5f6f66">${esc(d.desc)}</p><ul>${(byType[ty]||[]).map(x=>`<li><b>${esc(x.dir)} ${esc(x.s.id)}</b> ${esc(x.s.title)}: ${esc(x.s.change.what)}</li>`).join('')||'<li>none</li>'}</ul></div>`).join('');
   document.getElementById('changes-panel').innerHTML = `<div class="card"><h2>Changes needed to go paperless: by type</h2><p>Every TO-BE step marked names one of five kinds of change. This groups them so each can be taken to the body that owns it. A step's type is the type of work needed to implement that step; the rule it links to may be of a broader type (for example an internal gate change that depends on an inter-agency agreement).</p><div class="legend-grid">${typeCards}</div></div>
-  <div class="card"><h2>The rules, practices and agreements behind the paper</h2><p>One row per reason paper still exists today. BLPA can change only the rows it owns; the others are the requests to make to NBR (Customs), the Single Window programme, the banks, the agencies and, for the Car Pass, the Indian side.</p>${table(['ID','Type','What forces paper today','Why it exists','What must change','Who decides','What it enables in IBMS','Priority','<span class="rv">Source</span>'], rows, 1500)}</div>
+  <div class="card"><h2>The rules, practices and agreements behind the paper</h2><p>One row per reason paper still exists today. BLPA can change only the rows it owns; the others are the requests to make to NBR (Customs), the Single Window programme, the banks, the agencies and, for the Car Pass, the Indian side.</p>${xtable(['ID','Type','What forces paper today','Why it exists','What must change','Who decides','What it enables in IBMS','Priority','<span class="rv">Source</span>'], rows, 1500, 'BLPA_rules_to_change')}</div>
   <div class="card"><h2>What "paperless for BLPA" means</h2><p class="body">${esc(PAPERLESS_DEFINITION)}</p><ul>${PAPERLESS_CONDITIONS.map(c=>`<li>${esc(c)}</li>`).join('')}</ul></div>`;
 }
 function renderDivergence(){
   const rows = DIVERGENCE.map(d=>`<tr><td class="k">${esc(d.topic)}</td><td>${esc(d.ben)}</td><td>${esc(d.bho)}</td><td>${esc(d.bur)}</td><td>${esc(d.finding)}</td><td class="rv">${esc(d.src)}</td></tr>`);
-  document.getElementById('divergence-panel').innerHTML = `<div class="card"><h2>Where the three ports differ</h2><p>All three ports run the same ISLAS software, so the core flow is the same. These are the points where the physical process, the cargo or the local rules differ, and what that means for the design.</p>${table(['Topic','Benapole','Bhomra','Burimari','What it means for the design','<span class="rv">Source</span>'], rows, 1400)}</div>`;
+  document.getElementById('divergence-panel').innerHTML = `<div class="card"><h2>Where the three ports differ</h2><p>All three ports run the same ISLAS software, so the core flow is the same. These are the points where the physical process, the cargo or the local rules differ, and what that means for the design.</p>${xtable(['Topic','Benapole','Bhomra','Burimari','What it means for the design','<span class="rv">Source</span>'], rows, 1400, 'BLPA_port_differences')}</div>`;
 }
 function renderValidate(){
   const rows = [];
@@ -885,12 +950,13 @@ function renderSpaghetti(){
   const nodeById = Object.fromEntries(sp.nodes.map(n=>[n.id,n]));
   const shown = sp.travellers.filter(t => state.trav==='all' || t.key===state.trav);
   const asisSteps = resolveSteps('asis','import',state.spagPort), tobeSteps = resolveSteps('tobe','import',state.spagPort);
-  const stepTime = id => { const s = stepById(asisSteps, id); return s ? timeAsIs(state.spagPort,'import',s) : {basis:'',level:''}; };
+  const stepTime = id => { const s = stepById(asisSteps, id); return s ? timeAsIs(state.spagPort,'import',s) : {basis:'',level:'',hours:null}; };
   const RANK = {High:3, Medium:2, Low:1};
-  const topLevel = ids => { let best = null; ids.forEach(id => { const t = stepTime(id); if (t.level && t.role !== 'within' && (!best || RANK[t.level] > RANK[best.level])) best = t; else if (t.level && t.role === 'within' && t.basis === 'reported' && (!best || RANK[t.level] > RANK[best.level])) best = t; }); return best; };
-  const nodeLevel = {}; sp.travellers.forEach(t => t.moves.forEach(m => { const b = topLevel([m.step]); if (b && (!nodeLevel[m.to] || RANK[b.level] > RANK[nodeLevel[m.to]])) nodeLevel[m.to] = b.level; }));
+  const nodeLevel = {}, nodeHours = {}, nodeSteps = {};
+  sp.travellers.forEach(t => t.moves.forEach(m => { const x = stepTime(m.step); if (x.role === 'carry' && (!nodeLevel[m.to] || RANK[x.level] > RANK[nodeLevel[m.to]])) nodeLevel[m.to] = x.level; (nodeSteps[m.to] = nodeSteps[m.to] || new Set()).add(m.step); }));
+  Object.entries(nodeSteps).forEach(([id, set]) => { nodeHours[id] = [...set].reduce((n, sid) => n + hoursOf(stepTime(sid)), 0); });
   const afterPaperless = id => { const succ = tobeSteps.filter(x => x.asis === id); if (!succ.length) return 'this move disappears'; const c = timeToBe(state.spagPort,'import',succ[0]).change; return c==='Same' ? 'as today' : c==='Outside BLPA' ? 'outside BLPA' : c.toLowerCase(); };
-  const moveChip = id => { const s = stepById(asisSteps, id); return s ? timeChip(s, state.spagPort, 'import').replace('class="t', 'class="tag t') : ''; };
+  const moveTime = id => { const s = stepById(asisSteps, id); if (!s) return ''; const chip = timeChip(s, state.spagPort, 'import').replace('class="t', 'class="tag t'); if (chip) return chip; const x = timeAsIs(state.spagPort, 'import', s); if (x.role === 'within' || x.role === 'moment') return `<span class="muted">inside the time at ${esc(x.part.at)}</span>`; if (x.basis === 'reported') return '<span class="muted">wait reported, not timed</span>'; return '<span class="muted">not timed</span>'; };
   const W = sp.width || 1500, H = sp.height || 720;
   const nodeSvg = sp.nodes.map(n=>{ const w=n.w||150, h=n.h||46; const fill = n.type==='blpa'?'#e8f4ed':n.type==='cus'?'#eef1f3':n.type==='cf'?'#f1eafe':n.type==='bank'?'#fff4d8':n.type==='ext'?'#f5f7f8':'#fff'; const lv = nodeLevel[n.id]; const stroke = lv==='High'?'#b94646':lv==='Medium'?'#b47d13':'#7d8c84'; return `<g><rect x="${n.x-w/2}" y="${n.y-h/2}" width="${w}" height="${h}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${lv?2.2:1.2}"/>${lv?`<g><circle cx="${n.x+w/2-2}" cy="${n.y-h/2+2}" r="8" fill="${stroke}"/><text x="${n.x+w/2-2}" y="${n.y-h/2+5.5}" text-anchor="middle" font-size="9" fill="#fff" font-weight="800">${lv==='High'?'H':'M'}</text><title>${esc('Waiting here is rated '+lv)}</title></g>`:''}<foreignObject x="${n.x-w/2}" y="${n.y-h/2}" width="${w}" height="${h}"><div xmlns="http://www.w3.org/1999/xhtml" style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center;font:10.5px/1.2 Segoe UI,Arial,sans-serif;font-weight:800;color:#193426;padding:3px 6px">${esc(n.label)}</div></foreignObject></g>`; }).join('');
   const pair = {};
@@ -899,23 +965,24 @@ function renderSpaghetti(){
   const zones = (sp.zones||[]).map(z=>`<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="12" fill="#fafcfb" stroke="#dce5df" stroke-dasharray="4 3"/><text x="${z.x+10}" y="${z.y+16}" font-size="10" font-weight="800" fill="#68756d">${esc(z.label)}</text>`).join('');
   const touches = {};
   sp.travellers.forEach(t => t.moves.forEach((m,i) => { (touches[m.to] = touches[m.to] || []).push({t, i, m}); }));
-  const touchRows = sp.nodes.filter(n=>touches[n.id]).map(n => { const list = touches[n.id]; const byT = {}; list.forEach(x => { (byT[x.t.label] = byT[x.t.label] || []).push(`${x.m.why} (step ${x.m.step})`); }); const lv = topLevel(list.map(x=>x.m.step)); return `<tr><td class="k">${esc(n.label)}</td><td><b>${list.length}</b></td><td>${lv?`<span class="tag t ${levelClass(lv.level)}">${esc(lv.level)}</span><br><small>${esc(lv.basis)}</small>`:'none reported'}</td><td>${Object.entries(byT).map(([k,v])=>`<div class="touch-who"><b>${esc(k)}</b>, ${v.length===1?'once':v.length===2?'twice':v.length+' times'}: ${v.map(x=>esc(x)).join('; ')}</div>`).join('')}</td></tr>`; });
+  const touchRows = sp.nodes.filter(n=>touches[n.id]).map(n => { const list = touches[n.id]; const byT = {}; list.forEach(x => { (byT[x.t.label] = byT[x.t.label] || []).push(`${x.m.why} (step ${x.m.step})`); }); const hrs = nodeHours[n.id] || 0; const conds = [...(nodeSteps[n.id]||[])].map(id => { const x = stepTime(id); return x.cond && x.hours != null ? `${fmtH(x.hours)} at ${id} when it applies` : ''; }).filter(Boolean); const lv = nodeLevel[n.id];
+    return `<tr><td class="k">${esc(n.label)}</td><td><b>${list.length}</b></td><td>${hrs ? `<b>about ${esc(fmtH(hrs))}</b>${lv?` <span class="tag t ${levelClass(lv)}">${esc(lv)}</span>`:''}` : '<span class="muted">none carried here</span>'}${conds.length?`<div class="cond">+ ${esc(conds.join('; '))}</div>`:''}</td><td>${Object.entries(byT).map(([k,v])=>`<div class="touch-who"><b>${esc(k)}</b>, ${v.length===1?'once':v.length===2?'twice':v.length+' times'}: ${v.map(x=>esc(x)).join('; ')}</div>`).join('')}</td></tr>`; });
   const afterClass = a => (a==='this move disappears'||a==='removed'||a==='much shorter') ? 'drop' : a==='shorter' ? 'less' : a==='visible' ? 'vis' : 'same';
+  const travTotals = t => { const ids = [...new Set(t.moves.map(m => m.step))]; const A = ids.map(id => stepById(asisSteps, id)).filter(Boolean); const T = tobeSteps.filter(x => x.asis && ids.includes(x.asis)); return timeTotals(state.spagPort, 'import', A, T); };
   const travBlock = t => {
-    const times = t.moves.map(m => stepTime(m.step)); const after = t.moves.map(m => afterPaperless(m.step));
-    const highs = times.filter(x=>x.level==='High').length, meds = times.filter(x=>x.level==='Medium').length;
+    const after = t.moves.map(m => afterPaperless(m.step)); const r = travTotals(t);
     const gone = after.filter(a=>a==='this move disappears').length, drop = after.filter(a=>a==='removed'||a==='much shorter').length, less = after.filter(a=>a==='shorter').length;
     const places = new Set(t.moves.flatMap(m=>[m.from,m.to])).size; const foot = /foot|file/i.test(t.label);
-    const stay = (t.key==='itruck' && state.spagPort==='ben') ? `<span class="meas" title="Measured: gate in to gate out, one month of data">typical stay <b>${esc(fmtDur(TIME.parts.stay.typical,false))}</b>; one truck in ten over <b>${esc(fmtDur(TIME.parts.stay.slow,false))}</b></span>` : `<span class="meas muted">not timed by the data${state.spagPort!=='ben'?' (no data for this port yet)':''}</span>`;
-    const sum = `<div class="tv-sum"><span><b>${t.moves.length}</b> moves${foot?' on foot':''}</span><span><b>${places}</b> places</span><span class="${highs?'hot':''}"><b>${highs}</b> at High waits</span><span class="${meds?'warm':''}"><b>${meds}</b> at Medium waits</span>${stay}<span class="chg"><b>${gone}</b> disappear after paperless</span><span class="chg"><b>${drop}</b> removed or much shorter</span>${less?`<span class="chg"><b>${less}</b> shorter</span>`:''}</div>`;
-    const rows = t.moves.map((m,i) => `<tr><td class="n">${i+1}</td><td><b>${esc(nodeById[m.from]?.label)}</b><span class="arr">→</span><b>${esc(nodeById[m.to]?.label)}</b><div class="why">${esc(m.why)}</div></td><td class="st"><button type="button" class="rt-link" onclick="state.port=state.spagPort;state.dir='import';['asis','tobe'].forEach(v=>{const p=document.getElementById(v+'-panel');if(p.hidden)p.dataset.stale='1';});openStep('asis','${esc(m.step)}')">${esc(m.step)}</button></td><td class="tm">${moveChip(m.step)||'<span class="muted">none</span>'}</td><td class="af"><span class="tag t ${afterClass(after[i])}">${esc(after[i]==='this move disappears'?'disappears':after[i])}</span></td></tr>`).join('');
-    return `<section class="tv"><h3><span class="swatch" style="background:${t.color}"></span>${esc(t.label)}</h3><p class="tv-desc">${esc(t.desc)}</p>${sum}<table class="tv-table"><thead><tr><th>#</th><th>Move: from → to, and why</th><th>Step</th><th>Time today</th><th>After paperless</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+    const stay = (t.key==='itruck' && state.spagPort==='ben') ? `<span class="meas" title="Measured: gate in to gate out, one month of data">typical stay in the port <b>${esc(fmtDur(TIME.parts.stay.typical,false))}</b>; one truck in ten over <b>${esc(fmtDur(TIME.parts.stay.slow,false))}</b></span>` : '';
+    const sum = `<div class="tv-sum"><span><b>${t.moves.length}</b> moves${foot?' on foot':''}</span><span><b>${places}</b> places</span><span class="meas">time in these moves today: ${fmtToday(r)}</span><span class="chg">after paperless: ${fmtAfter(r)}</span>${stay}<span class="chg"><b>${gone}</b> moves disappear</span><span class="chg"><b>${drop}</b> removed or much shorter</span>${less?`<span class="chg"><b>${less}</b> shorter</span>`:''}</div>${fmtCond(r)}`;
+    const rows = t.moves.map((m,i) => `<tr><td class="n">${i+1}</td><td><b>${esc(nodeById[m.from]?.label)}</b><span class="arr">to</span><b>${esc(nodeById[m.to]?.label)}</b><div class="why">${esc(m.why)}</div></td><td class="st"><button type="button" class="rt-link" onclick="state.port=state.spagPort;state.dir='import';['asis','tobe'].forEach(v=>{const p=document.getElementById(v+'-panel');if(p.hidden)p.dataset.stale='1';});openStep('asis','${esc(m.step)}')">${esc(m.step)}</button></td><td class="tm">${moveTime(m.step)}</td><td class="af"><span class="tag t ${afterClass(after[i])}">${esc(after[i]==='this move disappears'?'disappears':after[i])}</span></td></tr>`).join('');
+    return `<section class="tv"><h3><span class="swatch" style="background:${t.color}"></span>${esc(t.label)}</h3><p class="tv-desc">${esc(t.desc)}</p>${sum}${xwrap(`<table class="tv-table"><thead><tr><th>#</th><th>Move: from, to, and why</th><th>Step</th><th>Time today</th><th>After paperless</th></tr></thead><tbody>${rows}</tbody></table>`, `BLPA_spaghetti_${PORTS[state.spagPort].name}_${t.key}`)}</section>`;
   };
   const lists = shown.map(travBlock).join('');
-  el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Spaghetti: who walks where for one import consignment</h2><p class="body">${esc(sp.intro)}</p><div class="toolbar"><div class="grp"><b>Port</b><span class="seg">${ports}</span></div><div class="grp"><b>Traveller</b><span class="trav">${travBtns}</span></div><span class="hint">Numbers on the lines are the order of moves for that traveller; each traveller's table lists its moves in order with the step, the time today and what happens to the move after paperless; pick one traveller to see its table in full width. A red H or orange M on a location means the waiting there is rated High or Medium.</span></div>
+  el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Spaghetti: who walks where for one import consignment</h2><p class="body">${esc(sp.intro)}</p><div class="toolbar"><div class="grp"><b>Port</b><span class="seg">${ports}</span></div><div class="grp"><b>Traveller</b><span class="trav">${travBtns}</span></div><span class="hint">Numbers on the lines are the order of moves for that traveller; each traveller's table lists its moves in order with the step, the time carried at that step today and what happens to the move after paperless; pick one traveller to see its table in full width. A red H or orange M on a location marks a measured wait rated High or Medium.</span></div>
   <div class="spag-layout ${state.trav==='all'?'':'single'}"><div><svg class="spag-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"><defs>${defs}</defs><rect width="${W}" height="${H}" fill="#fff"/>${zones}${edgeSvg}${nodeSvg}</svg></div><div class="spag-panel">${lists}</div></div>
-  <h3>Arrivals per location, and why each one happens</h3><p>Each row is a place. The count is how many times someone or something arrives there for one consignment; the text says who arrives, how often, and for which step.</p>${table(['Location','Arrivals','Waiting here','Who arrives, how often, and why'], touchRows, 900)}
-  ${sp.findings?`<h3>What the picture says</h3><ul>${sp.findings.map(f=>`<li>${esc(f)}</li>`).join('')}${state.spagPort==='ben'?`<li><b>Time:</b> ${esc(`an Indian truck typically stays ${fmtDur(TIME.parts.stay.typical)} from gate in to gate out; ${TIME.parts.recv.share}% of the average stay is between the posting record and the warehouse receipt and ${TIME.parts.post.share}% between the weighbridge and the posting record, which is where the walks for a shed and the posting-yard hold sit. After paperless, ${sp.travellers.reduce((a,t)=>a+t.moves.filter(m=>afterPaperless(m.step)==='this move disappears').length,0)} of the ${sp.travellers.reduce((a,t)=>a+t.moves.length,0)} moves disappear and ${sp.travellers.reduce((a,t)=>a+t.moves.filter(m=>['removed','much shorter'].includes(afterPaperless(m.step))).length,0)} more are removed or become much shorter.`)}</li>`:`<li><b>Time:</b> no time data yet for this port; the wait marks show what was reported. The Benapole figures are indicative for the same ISLAS flow.</li>`}</ul>`:''}</div>`;
+  <h3>Arrivals per location, and why each one happens</h3><p>Each row is a place. The count is how many times someone or something arrives there for one consignment; the time is the sum of the figures carried by the steps that arrive there (each step counted once); the text says who arrives, how often, and for which step.</p>${xtable(['Location','Arrivals','Time carried here today','Who arrives, how often, and why'], touchRows, 900, `BLPA_spaghetti_places_${PORTS[state.spagPort].name}`)}${TIME_CAVEAT()}
+  ${sp.findings?`<h3>What the picture says</h3><ul>${sp.findings.map(f=>`<li>${esc(f)}</li>`).join('')}${(() => { const ids = [...new Set(sp.travellers.flatMap(t => t.moves.map(m => m.step)))]; const r = timeTotals(state.spagPort, 'import', ids.map(id => stepById(asisSteps, id)).filter(Boolean), tobeSteps.filter(x => x.asis && ids.includes(x.asis))); const gone = sp.travellers.reduce((a,t)=>a+t.moves.filter(m=>afterPaperless(m.step)==='this move disappears').length,0), all = sp.travellers.reduce((a,t)=>a+t.moves.length,0), dropN = sp.travellers.reduce((a,t)=>a+t.moves.filter(m=>['removed','much shorter'].includes(afterPaperless(m.step))).length,0); return `<li><b>Time:</b> the steps behind these moves carry ${fmtToday(r)} today and ${fmtAfter(r)} after paperless${state.spagPort==='ben' ? `; an Indian truck typically stays ${esc(fmtDur(TIME.parts.stay.typical))} from gate in to gate out, and ${TIME.parts.recv.share}% of the average stay is between the posting record and the warehouse receipt` : ' (Benapole figures shown as indicative; no data for this port yet)'}. After paperless, ${gone} of the ${all} moves disappear and ${dropN} more are removed or become much shorter.</li>`; })()}</ul>`:''}</div>`;
   linkSteps(el, 'asis', state.spagPort, 'import');
 }
 
@@ -923,33 +990,33 @@ function renderSpaghetti(){
 /* ===================== time tab ===================== */
 function renderTime(){
   const el = document.getElementById('time-panel'); const P = TIME.parts; const M = TIME.meta;
-  const partRows = TIME.order.map(k => { const p = P[k]; const whole = k==='stay'; return `<tr><td class="k">${esc(p.label)}</td><td>${esc(whole?'everything from gate in to gate out':p.steps.join(', '))}</td><td>${p.n.toLocaleString()}</td><td><b>${esc(fmtDur(p.typical))}</b></td><td>${esc(fmtDur(p.average))}</td><td>${esc(fmtDur(p.slow))}</td><td>${p.over24}%</td><td>${whole?'none':p.share+'%'}</td><td>${whole?'none':p.longestShare+'%'}</td><td>${p.level?`<span class="tag t ${levelClass(p.level)}">${esc(p.level)}</span>`:'none'}</td><td>${esc(p.why)}</td></tr>`; });
-  const tobeBen = resolveSteps('tobe','import','ben'); const asisBen = resolveSteps('asis','import','ben');
-  const fixFor = ids => { const out = new Set(); ids.forEach(id => tobeBen.filter(t=>t.asis===id).forEach(t => out.add(`${t.id} ${t.title}`))); return [...out].map(esc).join('<br>') || 'none'; };
+  const partRows = TIME.order.map(k => { const p = P[k]; const whole = k==='stay'; return `<tr><td class="k">${esc(p.label)}</td><td>${whole ? 'shown on the KPI strip, not on a step' : `step ${esc(p.at)}`}</td><td>${esc(whole?'everything from gate in to gate out':p.steps.filter(x => x !== p.at).join(', '))}</td><td>${p.n.toLocaleString()}</td><td><b>${esc(fmtDur(p.typical))}</b></td><td>${esc(fmtDur(p.average))}</td><td>${esc(fmtDur(p.slow))}</td><td>${p.over24}%</td><td>${whole?'-':p.share+'%'}</td><td>${p.level?`<span class="tag t ${levelClass(p.level)}">${esc(p.level)}</span>`:'-'}</td><td>${esc(p.why)}</td></tr>`; });
+  const tobeBen = resolveSteps('tobe','import','ben'); const asisBen = resolveSteps('asis','import','ben'); const phases = phaseList('import');
+  const estRows = asisBen.map(s => { const t = timeAsIs('ben','import',s); if (!t.basis && !t.role) return ''; if (t.role === 'within' || t.role === 'moment') return ''; const succ = tobeBen.find(x => x.asis === s.id); const tt = succ ? timeToBe('ben','import',succ) : null; const ph = phases.find(p => p.key === s.phase);
+    return `<tr><td class="k">${esc(s.id)} ${esc(s.title)}</td><td>${esc(actorLabel(s.actor))}</td><td>${ph?ph.n:''}</td><td>${t.hours != null ? `<b>${esc(fmtH(t.hours))}</b>` : (t.role === 'start' ? 'timing starts' : '<span class="muted">not timed</span>')}</td><td>${esc(t.basis || (t.role === 'start' ? 'measured' : ''))}${t.cond ? ' (when it applies; not in totals)' : ''}</td><td>${esc(t.note || t.why)}</td><td>${succ ? (tt.hours != null ? `<b>${esc(fmtH(tt.hours))}</b> <span class="tag t ${changeClass(tt.change)||'same'}">${esc(tt.change)}</span>` : `<span class="tag t ${changeClass(tt.change)||'same'}">${esc(tt.change)}</span>`) : '<span class="tag t drop">step removed</span>'}</td><td>${succ ? esc(tt.how) : 'the step has no successor'}</td></tr>`; }).filter(Boolean);
+  const fixFor = ids => { const out = new Set(); ids.forEach(id => tobeBen.filter(t=>t.asis===id).forEach(t => out.add(`${t.id} ${t.title}`))); return [...out].map(esc).join('<br>') || '-'; };
   const hot = [
-    ['Measured', 'Benapole, import', '4.4, 4.5, 5.1, 5.2 (6.1 to 6.4 for perishables)', 'The Indian truck from the posting record to the warehouse receipt: waiting for shed space and labour, unloading, keying the receipt', `${P.recv.label}: typically ${fmtDur(P.recv.typical)}; one truck in ten more than ${fmtDur(P.recv.slow)}; ${P.recv.share}% of the average stay; the longest part for ${P.recv.longestShare}% of trucks; ${P.recv.over24}% of trucks wait more than a day`, P.recv.why, fixFor(['5.1','5.2','4.5','6.4'])],
-    ['Measured', 'Benapole, import', '3.3, 4.1, 4.2, 4.3', 'The Indian truck from the weighbridge to the posting record: the C&F agent\'s walk for a shed, the hold in the posting yard', `${P.post.label}: typically ${fmtDur(P.post.typical)}; one truck in ten more than ${fmtDur(P.post.slow)}; ${P.post.share}% of the average stay; the slowest quarter of trucks take ${Math.round(P.post.slowq/P.post.quick)} times longer here than the quickest quarter`, P.post.why, fixFor(['4.2','4.3'])],
-    ['Measured', 'Benapole, import', '7.1, 7.2, 7.3', 'The empty Indian truck from the warehouse receipt to the gate out: empty weighing, the shared exit lane, the Customs seal', `${P.exit.label}: typically ${fmtDur(P.exit.typical)}; one truck in ten more than ${fmtDur(P.exit.slow)}; ${P.exit.share}% of the average stay; the exit is recorded for only ${M.donePct}% of trucks`, P.exit.why, fixFor(['7.1','7.2'])],
+    ['Measured', 'Benapole, import', '5.1 (carries 4.4, 4.5, 5.2; 6.1 to 6.4 for perishables)', 'The Indian truck from the posting record to the warehouse receipt: waiting for shed space and labour, unloading, keying the receipt', `${P.recv.label}: typically ${fmtDur(P.recv.typical)}; one truck in ten more than ${fmtDur(P.recv.slow)}; ${P.recv.share}% of the average stay; the longest part for ${P.recv.longestShare}% of trucks; ${P.recv.over24}% of trucks wait more than a day`, P.recv.why, fixFor(['5.1','5.2','4.5','6.4'])],
+    ['Measured', 'Benapole, import', '4.3 (carries 3.3, 4.1, 4.2)', 'The Indian truck from the weighbridge to the posting record: the C&F agent\'s walk for a shed, the hold in the posting yard', `${P.post.label}: typically ${fmtDur(P.post.typical)}; one truck in ten more than ${fmtDur(P.post.slow)}; ${P.post.share}% of the average stay; the slowest quarter of trucks take ${Math.round(P.post.slowq/P.post.quick)} times longer here than the quickest quarter`, P.post.why, fixFor(['4.2','4.3'])],
+    ['Measured', 'Benapole, import', '7.2 (carries 7.1, 7.3)', 'The empty Indian truck from the warehouse receipt to the gate out: empty weighing, the shared exit lane, the Customs seal', `${P.exit.label}: typically ${fmtDur(P.exit.typical)}; one truck in ten more than ${fmtDur(P.exit.slow)}; ${P.exit.share}% of the average stay; the exit is recorded for only ${M.donePct}% of trucks`, P.exit.why, fixFor(['7.1','7.2'])],
     ['Reported', 'All ports, import', '5.6, 6.5', 'The cargo and its clearance while agency samples travel to a laboratory outside the port', 'Laboratories are in a city or a university; tests sometimes take more than ten days.', TIME.reported.import['5.6'][1], fixFor(['5.6','6.5'])],
     ['Reported', 'All ports, import', '5.3', 'Cargo in the shed until Customs releases it and the port bill is paid', 'Uncleared cargo simply stays; the auction rule is not applied. Not visible in the truck data, which ends when the Indian truck leaves.', TIME.reported.import['5.3'][1], fixFor(['5.3'])],
-    ['Reported', 'All ports, import', '10.1, 10.3, 10.5, 10.6', 'The loaded local truck from the Release Order to the exit: bill after loading, bank inside port hours, Exit Pass valid for the day only, Customs signature', 'The bill is raised after loading; banks are in the port and keep port hours; an expired pass means paying the extra charge and re-collecting every signature. Local trucks are not in ISLAS, so this cannot be measured today.', 'Four counters in a row (billing, bank, billing again, Customs), each with a queue, and a pass that lapses at the end of the day. The C&F agent makes seventeen moves on foot for one consignment.', fixFor(['10.2','10.3','10.5','10.6'])],
-    ['Reported', 'All ports, import', '1.3, 1.8, 1.10, 2.1', 'The loaded Indian truck before the BLPA entry exists: the approach queue on the Indian side, zero point, the Customs cabin, the gate window', 'Queues seen on site. The truck data starts only when the gate keys the entry, so this waiting is not measured.', 'Papers are checked and written by hand at three points (BGB register, Customs register, ISLAS entry) with no advance record of the truck; a wrong Car Pass loops back to the C&F agent.', fixFor(['1.9','1.10','2.1','2.2'])],
-    ['Reported', 'All ports, export', '2.1, 6.2', 'The loaded export truck in the queue toward zero point and on the Indian side', 'The export queue toward zero point can last days; Indian-side checks are reported to be slow.', 'A queue outside BLPA\'s control; the crossing depends on the Indian side\'s checks and the transfer to Indian trucks.', 'Outside BLPA: no change from the paperless process.'],
-    ['Reported', 'All ports, export', '4.4, 5.2, 5.3', 'Export cargo waiting for agency tests, cash payment and the four signatures on the exit note', 'Charges are paid in cash; the exit note is signed by BLPA and Customs at entry and at exit.', 'Off-site tests as for import; cash handling and a note that is walked between offices for four signatures.', 'Export TO-BE 4.3, 5.2 and 5.3: electronic payment and a single-use digital pass.'],
+    ['Assumed', 'All ports, import', '10.1, 10.3, 10.5, 10.6', 'The loaded local truck from the Release Order to the exit: bill after loading, bank inside port hours, Exit Pass valid for the day only, Customs signature', 'About two and a half hours assumed across the billing steps when everything happens the same day; a bill raised after the bank closes, or a pass that lapses, adds a day. Local trucks are not in ISLAS, so this cannot be measured today.', 'Four counters in a row (billing, bank, billing again, Customs), each with a queue, and a pass that lapses at the end of the day. The C&F agent makes seventeen moves on foot for one consignment.', fixFor(['10.2','10.3','10.5','10.6'])],
+    ['Assumed', 'All ports, import', '1.8, 1.10, 2.1', 'The loaded Indian truck before the BLPA entry exists: zero point, the Customs cabin, the gate window', 'About 50 minutes assumed across the three stops when the papers are in order. The approach queue on the Indian side (1.3) is outside the data and not assumed.', 'Papers are checked and written by hand at three points (BGB register, Customs register, ISLAS entry) with no advance record of the truck; a wrong Car Pass loops back to the C&F agent.', fixFor(['1.9','1.10','2.1','2.2'])],
+    ['Reported', 'All ports, export', '2.1, 6.2', 'The loaded export truck in the queue toward zero point and on the Indian side', 'The export queue toward zero point can last days; Indian-side checks are reported to be slow. Not assumed.', 'A queue outside BLPA\'s control; the crossing depends on the Indian side\'s checks and the transfer to Indian trucks.', 'Outside BLPA: no change from the paperless process.'],
+    ['Assumed', 'All ports, export', '4.4, 5.2, 5.3', 'Export cargo waiting for the bank, cash payment and the four signatures on the exit note', 'About 2 h 45 min assumed across the three steps.', 'Cash handling and a note that is walked between offices for four signatures.', 'Export TO-BE 4.3, 5.2 and 5.3: electronic payment and a single-use digital pass.'],
   ];
-  const hotRows = hot.map((h,i) => `<tr><td><b>${i+1}</b></td><td><span class="tag t ${h[0]==='Measured'?(i<2?'high':'med'):'rep'}">${esc(h[0])}</span></td><td>${esc(h[1])}</td><td>${esc(h[2])}</td><td>${esc(h[3])}</td><td>${esc(h[4])}</td><td>${esc(h[5])}</td><td>${h[6]}</td></tr>`);
-  const expRows = tobeBen.map(s => { const t = timeToBe('ben','import',s); if (t.change==='Same') return ''; return `<tr><td class="k"><span class="sid b">${esc(s.id)}</span> ${esc(s.title)}</td><td>${esc(t.asisId||'new')}</td><td>${t.today&&t.today.level?`<span class="tag t ${levelClass(t.today.level)}">${esc(t.today.level)}</span> <small>${esc(t.today.basis)}</small>`:(t.today?'none':'new step')}</td><td><span class="tag t ${changeClass(t.change)||'same'}">${esc(t.change)}</span></td><td>${esc(t.expect)}</td></tr>`; }).filter(Boolean);
+  const hotRows = hot.map((h,i) => `<tr><td><b>${i+1}</b></td><td><span class="tag t ${h[0]==='Measured'?(i<2?'high':'med'):h[0]==='Assumed'?'asm':'rep'}">${esc(h[0])}</span></td><td>${esc(h[1])}</td><td>${esc(h[2])}</td><td>${esc(h[3])}</td><td>${esc(h[4])}</td><td>${esc(h[5])}</td><td>${h[6]}</td></tr>`);
   el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Where time goes today, and what the paperless process changes</h2>
-  <p class="body">Time is shown in the flows in three places: a time chip on each step, a time line on each phase, and a time box on each step card. This tab collects the figures behind them. Today's times come from one month of the Benapole truck tracking data (${esc(M.label)}: ${M.trips.toLocaleString()} Indian truck trips, ${M.done.toLocaleString()} with a recorded exit). The data records the Indian truck only, at five moments: gate in, weighing, posting, warehouse receipt, gate out. The time between two moments belongs to the steps between them, so a step's figure is for those steps together, not for that step alone. Where nothing is timed (Customs, agencies, the bank, the local truck, the queue before the gate) the map shows what people reported. The expected change after paperless is a direction, not a target: targets are set once the pilot measures the new flow.</p>
-  <div class="legend-grid"><div class="legend-box"><h4>Reading the time chip</h4><ul><li><b>+3 h 16 min · High</b>: this step creates a recorded moment; the time is measured since the previous recorded moment (for the posting record, since the weighbridge). Only the five steps that create a moment carry a number: 2.2 gate in, 3.2 weighbridge, 4.3 posting record, 5.2 warehouse receipt, 7.2 gate out.</li><li>Steps between two moments carry no number: the data cannot split the span between them. Their step card says which span they sit in.</li><li><b>High (reported)</b>: a wait described by the port or seen on site, not yet timed.</li><li>Rating: High when the part takes 25% or more of the average stay, Medium from 10%, otherwise Low.</li><li>"Typical" is the middle truck: half are quicker, half slower. "One truck in ten" is the slow case.</li></ul></div>
-  <div class="legend-box"><h4>Reading the TO-BE chip</h4><ul><li><b>Removed</b>: the wait or the walk disappears.</li><li><b>Much shorter</b>: hours become minutes because the counter, the paper or the walk goes.</li><li><b>Shorter</b>: less handling at the step.</li><li><b>Visible</b>: not shorter by itself, but the wait becomes measurable and can be managed.</li><li>No chip: as today (physical work, or another agency's step).</li></ul></div></div></div>
-  <div class="card"><h2>Where the measured time goes: Benapole import, Indian truck</h2>${table(['Time between two recorded moments','Steps that happen in between (not timed on their own)','Trucks timed','Typical time','Average','Slow cases (1 in 10 longer)','More than a day','Share of the stay','Longest part of the stay for','Rating','Why it takes this long'], partRows, 1200)}
+  <p class="body">Today's times come from one month of the Benapole truck tracking data (${esc(M.label)}: ${M.trips.toLocaleString()} Indian truck trips, ${M.done.toLocaleString()} with a recorded exit). The data records the Indian truck at five moments only: gate in, weighing, posting, warehouse receipt, gate out. The time between two moments is shown once, on the step where that time is spent; the other steps in the span carry no figure of their own. Where the data has nothing (Customs, the agencies, the bank, the local truck, the walks) the map shows an assumed figure, rounded and marked "assumed", to be validated with the ports. The figures after paperless are assumptions too, and the pilot will replace them with measurements.</p>${TIME_CAVEAT()}
+  <div class="legend-grid"><div class="legend-box"><h4>Reading the time on a step</h4><ul><li><b>3 h 16 min measured</b>: this step carries a measured span (the time from the previous recorded moment). Four steps carry a measured figure: 3.2 weighing, 4.3 posting, 5.1 unloading, 7.2 exit.</li><li><b>about 30 min assumed</b>: not in the data; an assumption from site visits and interviews.</li><li><b>10 days or more, reported</b>: a figure the port gave; shown on the step, left out of the totals because it applies to some consignments only.</li><li>No figure: the step sits inside a measured span (the step card says which), or nothing is timed there.</li><li>"Typical" is the middle truck: half are quicker, half slower. "One truck in ten" is the slow case.</li></ul></div>
+  <div class="legend-box"><h4>Reading the time after paperless</h4><ul><li><b>Removed</b>: the step or the walk disappears (0).</li><li><b>Much shorter</b>: a measured span is taken at today's quickest quarter of trucks; an assumed step at a quarter of today.</li><li><b>Shorter</b>: half of today.</li><li><b>Visible</b>: not shorter by itself, but the wait becomes measurable and can be managed; as today in the totals.</li><li>No chip: as today (physical work, or another agency's step).</li></ul></div></div></div>
+  <div class="card"><h2>Where the measured time goes: Benapole import, Indian truck</h2>${xtable(['Time between two recorded moments','Carried by','Steps inside the span (no figure of their own)','Trucks timed','Typical time','Average','Slow cases (1 in 10 longer)','More than a day','Share of the stay','Rating','Why it takes this long'], partRows, 1200, 'BLPA_time_measured_spans')}
   <p class="body" style="margin-top:8px">Coverage: ${esc(M.covered)}. Gate in, weighing and weight are recorded for every truck; the exit for ${M.donePct}%. The quickest quarter of trucks stay ${esc(M.p25)} hours or less, the slowest quarter ${esc(M.p75)} hours or more; the difference is almost entirely in the two High parts.</p></div>
-  <div class="card"><h2>Where the most time is lost, and what the paperless process does about it</h2>${table(['#','How we know','Where','Steps','What is waiting','How long','Why','After paperless'], hotRows, 1200)}</div>
-  <div class="card"><h2>Expected change per step: TO-BE import (Benapole; the same flow runs at Bhomra and Burimari)</h2><p class="body">Only steps where something changes are listed; every other TO-BE step is as today.</p>${table(['TO-BE step','Replaces','Today','Expected','What changes the time'], expRows, 1000)}</div>`;
+  <div class="card"><h2>Every step that carries a figure: Benapole import</h2><p class="body">One row per step with a time today or after paperless. Steps inside a measured span are not listed; their time is in the carrying step. The same figures drive the AS-IS and TO-BE maps, the re-engineering table and the spaghetti tab.</p>${xtable(['Step','Actor','Phase','Time today','Basis','Note','After paperless (assumed)','How the figure after is set'], estRows, 1200, 'BLPA_time_per_step')}</div>
+  <div class="card"><h2>Where the most time is lost, and what the paperless process does about it</h2>${xtable(['#','How we know','Where','Steps','What is waiting','How long','Why','After paperless'], hotRows, 1200, 'BLPA_time_hotspots')}</div>`;
   linkSteps(el, 'asis', 'ben', 'import');
 }
-
 
 /* ===================== step numbers as links ===================== */
 function linkSteps(root, view, port, dir){
@@ -1124,6 +1191,7 @@ const TIME = {
    "span": "2.2 to 3.2",
    "frm": "2.2",
    "to": "3.2",
+   "at": "3.2",
    "steps": [
     "3.1",
     "3.2"
@@ -1146,6 +1214,7 @@ const TIME = {
    "span": "3.2 to 4.3",
    "frm": "3.2",
    "to": "4.3",
+   "at": "4.3",
    "steps": [
     "3.3",
     "4.1",
@@ -1170,6 +1239,7 @@ const TIME = {
    "span": "4.3 to 5.2",
    "frm": "4.3",
    "to": "5.2",
+   "at": "5.1",
    "steps": [
     "4.4",
     "4.5",
@@ -1198,6 +1268,7 @@ const TIME = {
    "span": "5.2 to 7.2",
    "frm": "5.2",
    "to": "7.2",
+   "at": "7.2",
    "steps": [
     "7.1",
     "7.2",
@@ -1221,6 +1292,7 @@ const TIME = {
    "span": "2.2 to 7.2",
    "frm": "2.2",
    "to": "7.2",
+   "at": "",
    "steps": [
     "2.2"
    ],
@@ -1256,6 +1328,12 @@ const TIME = {
   "5.2": "recv",
   "7.2": "exit"
  },
+ "carry": {
+  "3.2": "wb",
+  "4.3": "post",
+  "5.1": "recv",
+  "7.2": "exit"
+ },
  "within": {
   "3.1": "wb",
   "3.3": "post",
@@ -1263,7 +1341,7 @@ const TIME = {
   "4.2": "post",
   "4.4": "recv",
   "4.5": "recv",
-  "5.1": "recv",
+  "5.2": "recv",
   "6.1": "recv",
   "6.2": "recv",
   "6.3": "recv",
@@ -1662,7 +1740,273 @@ const TIME = {
     "The return is recorded by plate scan; no cash fee at the gate."
    ]
   }
- }
+ },
+ "est": {
+  "import": {
+   "1.4": [
+    0.25,
+    "assumed",
+    "Keying the manifest into ASYCUDA at the C&F office."
+   ],
+   "1.5": [
+    1.0,
+    "assumed",
+    "Keying the declaration, printing it, attaching stamps and carrying the file to the Customs House."
+   ],
+   "1.6": [
+    0.5,
+    "assumed",
+    "The border man walks the blank Car Pass to the Indian C&F and back."
+   ],
+   "1.7": [
+    0.25,
+    "assumed",
+    "Indian Customs stamps the Car Pass; short when the papers are in order."
+   ],
+   "1.8": [
+    0.25,
+    "assumed",
+    "Stop at zero point; papers handed over and checked by hand."
+   ],
+   "1.9": [
+    0.17,
+    "assumed",
+    "BGB writes the truck, driver and Car Pass into its register."
+   ],
+   "1.10": [
+    0.33,
+    "assumed",
+    "Queue at the Customs entry cabin; entry seal and register."
+   ],
+   "1.11": [
+    0.5,
+    "assumed",
+    "Scanner pass, only for the trucks Customs selects.",
+    true
+   ],
+   "2.1": [
+    0.25,
+    "assumed",
+    "Queue at the BLPA gate window before the entry is typed; the data starts only after this."
+   ],
+   "2.2": [
+    0.08,
+    "assumed",
+    "Typing the Car Pass into the vehicle entry form: a few minutes per truck."
+   ],
+   "5.4": [
+    2.0,
+    "assumed",
+    "Customs checks the file and ASYCUDA assigns the channel; usually within the working day."
+   ],
+   "5.5": [
+    2.0,
+    "assumed",
+    "Physical examination in the shed, red channel only.",
+    true
+   ],
+   "5.6": [
+    240.0,
+    "reported",
+    "Laboratory tests outside the port: the port reports ten days or more. Tested commodities only.",
+    true
+   ],
+   "6.5": [
+    240.0,
+    "reported",
+    "Laboratory tests outside the port: ten days or more. Tested commodities only; the loaded local trucks wait at the exit.",
+    true
+   ],
+   "8.1": [
+    3.0,
+    "assumed",
+    "Assessment at the Customs House and the printed notice; usually the same working day, longer when a query is raised."
+   ],
+   "8.2": [
+    1.0,
+    "assumed",
+    "Queue and payment at the bank counter, open 9 to 5; a late assessment waits for the next banking day."
+   ],
+   "8.3": [
+    0.5,
+    "assumed",
+    "Walk back to Customs with the receipt and wait at the desk."
+   ],
+   "8.4": [
+    1.0,
+    "assumed",
+    "Release Order printed and collected; carried by hand to BLPA."
+   ],
+   "9.1": [
+    2.0,
+    "assumed",
+    "Finding and calling local trucks through the association or by phone."
+   ],
+   "9.2": [
+    0.25,
+    "assumed",
+    "Local truck enters unregistered and reaches the shed."
+   ],
+   "9.3": [
+    2.0,
+    "assumed",
+    "Loading by contracted labour and locking the record."
+   ],
+   "10.1": [
+    0.5,
+    "assumed",
+    "Queue at the BLPA billing counter."
+   ],
+   "10.2": [
+    0.25,
+    "assumed",
+    "Charges calculated in ISLAS and the bill printed."
+   ],
+   "10.3": [
+    0.75,
+    "assumed",
+    "Queue and payment at the bank inside the port; after banking hours it waits for the next day."
+   ],
+   "10.4": [
+    0.25,
+    "assumed",
+    "Walk back to the billing counter with the receipt."
+   ],
+   "10.5": [
+    0.25,
+    "assumed",
+    "Exit Pass printed in four copies and signed. A pass that lapses costs a further day and every signature again."
+   ],
+   "10.6": [
+    0.5,
+    "assumed",
+    "Walk to the port Customs officer for signature and stamp, and back."
+   ],
+   "10.7": [
+    0.08,
+    "assumed",
+    "Driver hands the pass over at the exit gate."
+   ],
+   "10.8": [
+    0.25,
+    "assumed",
+    "Queue in the exit lane shared with empties; pass checked by eye."
+   ]
+  },
+  "export": {
+   "1.2": [
+    0.5,
+    "assumed",
+    "Keying the Bill of Export in ASYCUDA."
+   ],
+   "2.1": [
+    0.25,
+    "assumed",
+    "At the gate: cash entry fee and papers. The queue toward zero point before this is outside the data."
+   ],
+   "2.2": [
+    0.17,
+    "assumed",
+    "C&F agent collects the documents from the driver."
+   ],
+   "3.1": [
+    0.25,
+    "assumed",
+    "Weighing, then the slip signed by BLPA and countersigned by Customs."
+   ],
+   "3.2": [
+    0.17,
+    "assumed",
+    "Customs stamps the Car Pass for the crossing."
+   ],
+   "3.3": [
+    0.5,
+    "assumed",
+    "Walk with the Weight Report and Car Pass to the C&F office."
+   ],
+   "4.1": [
+    2.0,
+    "assumed",
+    "Customs inspection and the sampling decision."
+   ],
+   "4.2": [
+    240.0,
+    "reported",
+    "Agency laboratory test: ten days or more. Tested commodities only.",
+    true
+   ],
+   "4.3": [
+    3.0,
+    "assumed",
+    "Verification in ASYCUDA, assessment and the printed notice."
+   ],
+   "4.4": [
+    1.0,
+    "assumed",
+    "Queue and payment at the bank."
+   ],
+   "4.5": [
+    0.5,
+    "assumed",
+    "Final Bill of Export printed with all references."
+   ],
+   "5.1": [
+    0.5,
+    "assumed",
+    "Queue at the billing counter; bill calculated and issued."
+   ],
+   "5.2": [
+    0.75,
+    "assumed",
+    "Cash payment at the bank; receipt carried back."
+   ],
+   "5.3": [
+    1.0,
+    "assumed",
+    "Exit note in four copies, signed by three parties; walked between offices."
+   ],
+   "6.1": [
+    0.25,
+    "assumed",
+    "Exit note checked at the gate."
+   ],
+   "7.1": [
+    0.17,
+    "assumed",
+    "Customs sees the Car Pass on return."
+   ],
+   "7.2": [
+    0.25,
+    "assumed",
+    "Cash terminal fee collected at the gate."
+   ]
+  }
+ },
+ "tobeNew": {
+  "import": {
+   "1.6": 0.0,
+   "1.7": 0.1,
+   "4.5": 0.02
+  },
+  "export": {
+   "1.3": 0.1,
+   "4.4": 0.0
+  }
+ },
+ "afterAt": {
+  "wb": 0.08,
+  "post": 0.87,
+  "exit": 1.71
+ },
+ "afterRule": {
+  "Removed": 0.0,
+  "Much shorter": 0.25,
+  "Shorter": 0.5,
+  "Visible": 1.0,
+  "Same": 1.0,
+  "Outside BLPA": 1.0
+ },
+ "caveat": "Time figures come from one month of Benapole truck tracking data with five timestamps per truck (gate in, weighing, posting, warehouse receipt, gate out). The data times the truck between those moments, not each step, so each measured span is shown once, on the step where the time is spent. Every other figure is an assumption from site visits and interviews, rounded and marked as such, to be validated with the ports. Figures after paperless are assumptions: measured spans are taken at today's quickest quarter of trucks; assumed steps follow a fixed rule (removed = 0, much shorter = a quarter, shorter = half, otherwise as today). Totals add up the figures of the steps shown; they are not the elapsed time of one truck, because some steps run in parallel (Customs clearance while the cargo waits in the shed)."
 };
 /* ===================== analytics: aggregates of the Benapole truck data (no trip rows embedded) ===================== */
 const ANALYTICS = {"meta": {"trips": 8081, "done": 6008, "donePct": 74, "frm": "01 Jul 2026", "to": "03 Aug 2026", "days": 34, "covered": 28, "missing": ["2026-07-03", "2026-07-10", "2026-07-17", "2026-07-24", "2026-07-30", "2026-07-31"], "tonnes": 150598, "manifests": 6012}, "stay": {"typical": 23.31, "average": 37.79, "slow": 90.59, "over24": 48, "over120": 5.4, "longest": 600.1}, "stages": [{"key": "wb", "label": "Gate in to weighbridge", "n": 8080, "typical": 0.08, "average": 0.19, "slow": 0.28, "share": 1, "over24": 0, "longestShare": 0}, {"key": "post", "label": "Weighbridge to posting record", "n": 8060, "typical": 3.27, "average": 10.4, "slow": 21.53, "share": 27, "over24": 9, "longestShare": 33}, {"key": "recv", "label": "Posting record to warehouse receipt", "n": 7909, "typical": 5.55, "average": 21.54, "slow": 56.26, "share": 57, "over24": 25, "longestShare": 46}, {"key": "exit", "label": "Warehouse receipt to gate out", "n": 6008, "typical": 2.72, "average": 5.95, "slow": 16.02, "share": 16, "over24": 4, "longestShare": 22}], "dwellDist": [{"label": "under 12 h", "n": 1574, "pct": 26}, {"label": "12 to 24 h", "n": 1575, "pct": 26}, {"label": "1 to 2 days", "n": 1465, "pct": 24}, {"label": "2 to 3 days", "n": 580, "pct": 10}, {"label": "3 to 5 days", "n": 489, "pct": 8}, {"label": "over 5 days", "n": 325, "pct": 5}], "daily": [{"d": "2026-07-01", "wd": "Wed", "arrivals": 274, "exits": 57, "tonnes": 5059}, {"d": "2026-07-02", "wd": "Thu", "arrivals": 354, "exits": 200, "tonnes": 6607}, {"d": "2026-07-03", "wd": "Fri", "arrivals": null, "exits": 0, "tonnes": 0}, {"d": "2026-07-04", "wd": "Sat", "arrivals": 332, "exits": 83, "tonnes": 6513}, {"d": "2026-07-05", "wd": "Sun", "arrivals": 271, "exits": 228, "tonnes": 4383}, {"d": "2026-07-06", "wd": "Mon", "arrivals": 277, "exits": 249, "tonnes": 5044}, {"d": "2026-07-07", "wd": "Tue", "arrivals": 326, "exits": 235, "tonnes": 5190}, {"d": "2026-07-08", "wd": "Wed", "arrivals": 304, "exits": 262, "tonnes": 5057}, {"d": "2026-07-09", "wd": "Thu", "arrivals": 325, "exits": 249, "tonnes": 5432}, {"d": "2026-07-10", "wd": "Fri", "arrivals": null, "exits": 31, "tonnes": 0}, {"d": "2026-07-11", "wd": "Sat", "arrivals": 364, "exits": 109, "tonnes": 7863}, {"d": "2026-07-12", "wd": "Sun", "arrivals": 339, "exits": 263, "tonnes": 5783}, {"d": "2026-07-13", "wd": "Mon", "arrivals": 205, "exits": 227, "tonnes": 3583}, {"d": "2026-07-14", "wd": "Tue", "arrivals": 285, "exits": 291, "tonnes": 5370}, {"d": "2026-07-15", "wd": "Wed", "arrivals": 332, "exits": 243, "tonnes": 6680}, {"d": "2026-07-16", "wd": "Thu", "arrivals": 360, "exits": 218, "tonnes": 6521}, {"d": "2026-07-17", "wd": "Fri", "arrivals": null, "exits": 52, "tonnes": 0}, {"d": "2026-07-18", "wd": "Sat", "arrivals": 315, "exits": 123, "tonnes": 7051}, {"d": "2026-07-19", "wd": "Sun", "arrivals": 451, "exits": 272, "tonnes": 7995}, {"d": "2026-07-20", "wd": "Mon", "arrivals": 253, "exits": 306, "tonnes": 4575}, {"d": "2026-07-21", "wd": "Tue", "arrivals": 374, "exits": 294, "tonnes": 7255}, {"d": "2026-07-22", "wd": "Wed", "arrivals": 321, "exits": 226, "tonnes": 5962}, {"d": "2026-07-23", "wd": "Thu", "arrivals": 311, "exits": 303, "tonnes": 5362}, {"d": "2026-07-24", "wd": "Fri", "arrivals": null, "exits": 52, "tonnes": 0}, {"d": "2026-07-25", "wd": "Sat", "arrivals": 54, "exits": 59, "tonnes": 1418}, {"d": "2026-07-26", "wd": "Sun", "arrivals": 164, "exits": 182, "tonnes": 3851}, {"d": "2026-07-27", "wd": "Mon", "arrivals": 420, "exits": 214, "tonnes": 6978}, {"d": "2026-07-28", "wd": "Tue", "arrivals": 239, "exits": 263, "tonnes": 4387}, {"d": "2026-07-29", "wd": "Wed", "arrivals": 364, "exits": 254, "tonnes": 7869}, {"d": "2026-07-30", "wd": "Thu", "arrivals": null, "exits": 204, "tonnes": 0}, {"d": "2026-07-31", "wd": "Fri", "arrivals": null, "exits": 5, "tonnes": 0}, {"d": "2026-08-01", "wd": "Sat", "arrivals": 190, "exits": 28, "tonnes": 3792}, {"d": "2026-08-02", "wd": "Sun", "arrivals": 183, "exits": 118, "tonnes": 3514}, {"d": "2026-08-03", "wd": "Mon", "arrivals": 94, "exits": 108, "tonnes": 1502}], "hourly": [{"h": 0, "arrivals": 0, "exits": 182, "medianDwell": null, "n": 0}, {"h": 1, "arrivals": 0, "exits": 45, "medianDwell": null, "n": 0}, {"h": 2, "arrivals": 0, "exits": 3, "medianDwell": null, "n": 0}, {"h": 3, "arrivals": 0, "exits": 0, "medianDwell": null, "n": 0}, {"h": 4, "arrivals": 0, "exits": 0, "medianDwell": null, "n": 0}, {"h": 5, "arrivals": 0, "exits": 0, "medianDwell": null, "n": 0}, {"h": 6, "arrivals": 0, "exits": 0, "medianDwell": null, "n": 0}, {"h": 7, "arrivals": 0, "exits": 0, "medianDwell": null, "n": 0}, {"h": 8, "arrivals": 0, "exits": 97, "medianDwell": null, "n": 0}, {"h": 9, "arrivals": 52, "exits": 186, "medianDwell": 9.71, "n": 44}, {"h": 10, "arrivals": 358, "exits": 149, "medianDwell": 13.82, "n": 254}, {"h": 11, "arrivals": 483, "exits": 283, "medianDwell": 21.2, "n": 346}, {"h": 12, "arrivals": 626, "exits": 433, "medianDwell": 7.63, "n": 483}, {"h": 13, "arrivals": 480, "exits": 510, "medianDwell": 23.37, "n": 372}, {"h": 14, "arrivals": 772, "exits": 331, "medianDwell": 23.41, "n": 682}, {"h": 15, "arrivals": 831, "exits": 291, "medianDwell": 22.71, "n": 677}, {"h": 16, "arrivals": 831, "exits": 438, "medianDwell": 24.65, "n": 661}, {"h": 17, "arrivals": 627, "exits": 536, "medianDwell": 23.43, "n": 497}, {"h": 18, "arrivals": 1039, "exits": 674, "medianDwell": 24.58, "n": 736}, {"h": 19, "arrivals": 780, "exits": 497, "medianDwell": 26.49, "n": 506}, {"h": 20, "arrivals": 794, "exits": 377, "medianDwell": 25.07, "n": 469}, {"h": 21, "arrivals": 379, "exits": 475, "medianDwell": 24.36, "n": 259}, {"h": 22, "arrivals": 29, "exits": 258, "medianDwell": null, "n": 22}, {"h": 23, "arrivals": 0, "exits": 243, "medianDwell": null, "n": 0}], "timeOfDay": {"morning": {"n": 644, "median": 13.91}, "evening": {"n": 2489, "median": 24.66}, "firstEntryHour": 9, "lastEntryHour": 22, "peakHour": 18}, "weekday": [{"wd": "Mon", "arrivals": 289, "exits": 249, "medianDwell": 22.35, "n": 825}, {"wd": "Tue", "arrivals": 306, "exits": 271, "medianDwell": 22.02, "n": 945}, {"wd": "Wed", "arrivals": 330, "exits": 246, "medianDwell": 21.5, "n": 1269}, {"wd": "Thu", "arrivals": 332, "exits": 257, "medianDwell": 45.03, "n": 986}, {"wd": "Fri", "arrivals": null, "exits": 45, "medianDwell": null, "n": 0}, {"wd": "Sat", "arrivals": 244, "exits": 97, "medianDwell": 25.39, "n": 959}, {"wd": "Sun", "arrivals": 306, "exits": 236, "medianDwell": 23.11, "n": 1024}], "sheds": [{"wh": "31", "trips": 1001, "n": 931, "median": 5.73, "p75": 18.2}, {"wh": "35", "trips": 199, "n": 132, "median": 21.41, "p75": 40.7}, {"wh": "25", "trips": 211, "n": 155, "median": 21.87, "p75": 48.5}, {"wh": "43", "trips": 689, "n": 645, "median": 22.89, "p75": 41.5}, {"wh": "1", "trips": 637, "n": 272, "median": 22.91, "p75": 48.6}, {"wh": "32", "trips": 191, "n": 158, "median": 23.23, "p75": 47.4}, {"wh": "34", "trips": 313, "n": 160, "median": 23.26, "p75": 48.9}, {"wh": "22", "trips": 285, "n": 164, "median": 23.89, "p75": 48.6}, {"wh": "38", "trips": 179, "n": 170, "median": 25.33, "p75": 67.4}, {"wh": "37", "trips": 208, "n": 175, "median": 26.04, "p75": 48.1}, {"wh": "44", "trips": 218, "n": 211, "median": 26.67, "p75": 47.2}, {"wh": "2", "trips": 747, "n": 307, "median": 28.06, "p75": 65.6}, {"wh": "21", "trips": 474, "n": 379, "median": 28.26, "p75": 51.4}, {"wh": "16", "trips": 312, "n": 295, "median": 28.99, "p75": 71.0}, {"wh": "9", "trips": 297, "n": 207, "median": 45.74, "p75": 96.0}, {"wh": "11", "trips": 256, "n": 191, "median": 49.06, "p75": 119.5}], "shedTotal": 36, "weightBands": [{"label": "under 10 t", "n": 1317, "median": 21.23}, {"label": "10 to 20 t", "n": 2339, "median": 23.51}, {"label": "20 to 30 t", "n": 1285, "median": 24.15}, {"label": "30 t and more", "n": 1067, "median": 24.99}], "origins": [{"code": "WB", "name": "West Bengal", "n": 4991, "pct": 62, "median": 24.36}, {"code": "NL", "name": "Nagaland", "n": 763, "pct": 9, "median": 24.15}, {"code": "HR", "name": "Haryana", "n": 564, "pct": 7, "median": 22.15}, {"code": "RJ", "name": "Rajasthan", "n": 561, "pct": 7, "median": 18.5}, {"code": "UP", "name": "Uttar Pradesh", "n": 218, "pct": 3, "median": 23.26}, {"code": "GJ", "name": "Gujarat", "n": 191, "pct": 2, "median": 8.95}, {"code": "TN", "name": "Tamil Nadu", "n": 117, "pct": 1, "median": 19.23}, {"code": "PB", "name": "Punjab", "n": 114, "pct": 1, "median": 21.25}], "originsOther": 562, "scales": [{"scale": "1", "trips": 4382, "medianMin": 5.4}, {"scale": "2", "trips": 3699, "medianMin": 4.2}], "flags": [{"label": "Customs assessment not yet done", "n": 1364, "pct": 17, "exitRate": 63, "exitRateYes": 77}, {"label": "Duty not yet paid at the bank", "n": 1560, "pct": 19, "exitRate": 64, "exitRateYes": 77}], "completeness": [{"label": "Gate in", "n": 8081, "pct": 100.0}, {"label": "Weighbridge", "n": 8081, "pct": 100.0}, {"label": "Posting record", "n": 8062, "pct": 99.8}, {"label": "Warehouse receipt", "n": 7909, "pct": 97.9}, {"label": "Gate out", "n": 6008, "pct": 74.3}, {"label": "Net weight", "n": 8081, "pct": 100.0}], "declared": {"n": 8031, "over": 5964, "overPct": 74, "medianKg": 180, "over500": 37}, "quartiles": {"p25": 10.4, "p75": 46.5, "fastMedian": 5.29, "slowMedian": 73.98, "rows": [{"label": "Gate in to weighbridge", "fast": 0.08, "slow": 0.08}, {"label": "Weighbridge to posting record", "fast": 0.87, "slow": 15.02}, {"label": "Posting record to warehouse receipt", "fast": 1.71, "slow": 49.49}, {"label": "Warehouse receipt to gate out", "fast": 1.71, "slow": 4.31}]}, "dailyTime": [{"d": "2026-07-01", "wd": "Wed", "n": 228, "medianDwell": 22.37, "report": true, "wb": 0.08, "post": 2.54, "recv": 4.96, "exit": 1.6}, {"d": "2026-07-02", "wd": "Thu", "n": 237, "medianDwell": 44.16, "report": true, "wb": 0.1, "post": 36.11, "recv": 19.44, "exit": 2.32}, {"d": "2026-07-03", "wd": "Fri", "n": 0, "medianDwell": null, "report": false, "wb": null, "post": null, "recv": null, "exit": null}, {"d": "2026-07-04", "wd": "Sat", "n": 263, "medianDwell": 29.77, "report": true, "wb": 0.09, "post": 14.45, "recv": 8.89, "exit": 2.4}, {"d": "2026-07-05", "wd": "Sun", "n": 210, "medianDwell": 23.14, "report": true, "wb": 0.08, "post": 1.83, "recv": 6.78, "exit": 2.51}, {"d": "2026-07-06", "wd": "Mon", "n": 195, "medianDwell": 24.29, "report": true, "wb": 0.08, "post": 14.59, "recv": 6.09, "exit": 2.15}, {"d": "2026-07-07", "wd": "Tue", "n": 252, "medianDwell": 23.3, "report": true, "wb": 0.07, "post": 1.88, "recv": 5.89, "exit": 3.01}, {"d": "2026-07-08", "wd": "Wed", "n": 219, "medianDwell": 22.41, "report": true, "wb": 0.08, "post": 12.96, "recv": 5.05, "exit": 2.54}, {"d": "2026-07-09", "wd": "Thu", "n": 236, "medianDwell": 43.36, "report": true, "wb": 0.09, "post": 2.32, "recv": 5.37, "exit": 3.08}, {"d": "2026-07-10", "wd": "Fri", "n": 0, "medianDwell": null, "report": false, "wb": null, "post": null, "recv": null, "exit": null}, {"d": "2026-07-11", "wd": "Sat", "n": 267, "medianDwell": 24.9, "report": true, "wb": 0.08, "post": 14.31, "recv": 6.73, "exit": 2.46}, {"d": "2026-07-12", "wd": "Sun", "n": 267, "medianDwell": 26.83, "report": true, "wb": 0.07, "post": 2.06, "recv": 17.99, "exit": 3.14}, {"d": "2026-07-13", "wd": "Mon", "n": 154, "medianDwell": 22.08, "report": true, "wb": 0.09, "post": 1.99, "recv": 6.73, "exit": 2.52}, {"d": "2026-07-14", "wd": "Tue", "n": 226, "medianDwell": 21.95, "report": true, "wb": 0.08, "post": 2.26, "recv": 4.17, "exit": 1.48}, {"d": "2026-07-15", "wd": "Wed", "n": 272, "medianDwell": 23.53, "report": true, "wb": 0.08, "post": 2.05, "recv": 5.4, "exit": 2.73}, {"d": "2026-07-16", "wd": "Thu", "n": 266, "medianDwell": 47.87, "report": true, "wb": 0.1, "post": 2.92, "recv": 6.71, "exit": 3.19}, {"d": "2026-07-17", "wd": "Fri", "n": 0, "medianDwell": null, "report": false, "wb": null, "post": null, "recv": null, "exit": null}, {"d": "2026-07-18", "wd": "Sat", "n": 273, "medianDwell": 25.25, "report": true, "wb": 0.1, "post": 13.74, "recv": 5.66, "exit": 3.25}, {"d": "2026-07-19", "wd": "Sun", "n": 324, "medianDwell": 26.09, "report": true, "wb": 0.08, "post": 12.43, "recv": 18.05, "exit": 3.87}, {"d": "2026-07-20", "wd": "Mon", "n": 188, "medianDwell": 23.05, "report": true, "wb": 0.08, "post": 3.24, "recv": 5.47, "exit": 3.35}, {"d": "2026-07-21", "wd": "Tue", "n": 266, "medianDwell": 24.53, "report": true, "wb": 0.08, "post": 12.66, "recv": 5.63, "exit": 3.16}, {"d": "2026-07-22", "wd": "Wed", "n": 256, "medianDwell": 22.67, "report": true, "wb": 0.07, "post": 2.33, "recv": 5.41, "exit": 3.66}, {"d": "2026-07-23", "wd": "Thu", "n": 247, "medianDwell": 41.86, "report": true, "wb": 0.07, "post": 1.8, "recv": 5.46, "exit": 2.48}, {"d": "2026-07-24", "wd": "Fri", "n": 0, "medianDwell": null, "report": false, "wb": null, "post": null, "recv": null, "exit": null}, {"d": "2026-07-25", "wd": "Sat", "n": 44, "medianDwell": 23.3, "report": true, "wb": 0.09, "post": 1.16, "recv": 20.85, "exit": 1.54}, {"d": "2026-07-26", "wd": "Sun", "n": 144, "medianDwell": 18.15, "report": true, "wb": 0.07, "post": 12.37, "recv": 1.98, "exit": 1.44}, {"d": "2026-07-27", "wd": "Mon", "n": 285, "medianDwell": 20.31, "report": true, "wb": 0.08, "post": 3.2, "recv": 2.88, "exit": 3.25}, {"d": "2026-07-28", "wd": "Tue", "n": 201, "medianDwell": 18.52, "report": true, "wb": 0.08, "post": 1.61, "recv": 3.17, "exit": 3.11}, {"d": "2026-07-29", "wd": "Wed", "n": 294, "medianDwell": 19.55, "report": true, "wb": 0.09, "post": 2.71, "recv": 2.92, "exit": 2.94}, {"d": "2026-07-30", "wd": "Thu", "n": 0, "medianDwell": null, "report": false, "wb": null, "post": null, "recv": null, "exit": null}, {"d": "2026-07-31", "wd": "Fri", "n": 0, "medianDwell": null, "report": false, "wb": null, "post": null, "recv": null, "exit": null}, {"d": "2026-08-01", "wd": "Sat", "n": 112, "medianDwell": 23.66, "report": true, "wb": 0.09, "post": 13.74, "recv": 7.14, "exit": 3.19}, {"d": "2026-08-02", "wd": "Sun", "n": 79, "medianDwell": 15.34, "report": true, "wb": 0.08, "post": 2.07, "recv": 3.28, "exit": 3.35}, {"d": "2026-08-03", "wd": "Mon", "n": 3, "medianDwell": null, "report": true, "wb": 0.06, "post": 0.69, "recv": null, "exit": null}], "inside": [{"d": "2026-07-01", "inside": 171, "arrivals": 274}, {"d": "2026-07-02", "inside": 208, "arrivals": 354}, {"d": "2026-07-03", "inside": 208, "arrivals": null}, {"d": "2026-07-04", "inside": 388, "arrivals": 332}, {"d": "2026-07-05", "inside": 370, "arrivals": 271}, {"d": "2026-07-06", "inside": 316, "arrivals": 277}, {"d": "2026-07-07", "inside": 333, "arrivals": 326}, {"d": "2026-07-08", "inside": 290, "arrivals": 304}, {"d": "2026-07-09", "inside": 277, "arrivals": 325}, {"d": "2026-07-10", "inside": 246, "arrivals": null}, {"d": "2026-07-11", "inside": 404, "arrivals": 364}, {"d": "2026-07-12", "inside": 408, "arrivals": 339}, {"d": "2026-07-13", "inside": 335, "arrivals": 205}, {"d": "2026-07-14", "inside": 270, "arrivals": 285}, {"d": "2026-07-15", "inside": 299, "arrivals": 332}, {"d": "2026-07-16", "inside": 347, "arrivals": 360}, {"d": "2026-07-17", "inside": 295, "arrivals": null}, {"d": "2026-07-18", "inside": 445, "arrivals": 315}, {"d": "2026-07-19", "inside": 497, "arrivals": 451}, {"d": "2026-07-20", "inside": 379, "arrivals": 253}, {"d": "2026-07-21", "inside": 351, "arrivals": 374}, {"d": "2026-07-22", "inside": 381, "arrivals": 321}, {"d": "2026-07-23", "inside": 325, "arrivals": 311}, {"d": "2026-07-24", "inside": 273, "arrivals": null}, {"d": "2026-07-25", "inside": 258, "arrivals": 54}, {"d": "2026-07-26", "inside": 220, "arrivals": 164}, {"d": "2026-07-27", "inside": 291, "arrivals": 420}, {"d": "2026-07-28", "inside": 229, "arrivals": 239}, {"d": "2026-07-29", "inside": 269, "arrivals": 364}, {"d": "2026-07-30", "inside": 65, "arrivals": null}, {"d": "2026-07-31", "inside": 60, "arrivals": null}, {"d": "2026-08-01", "inside": 144, "arrivals": 190}, {"d": "2026-08-02", "inside": 105, "arrivals": 183}, {"d": "2026-08-03", "inside": 0, "arrivals": 94}], "heat": [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.2, 13.6, 18.0, 23.2, 19.0, 27.4, 22.4, 26.6, 18.8, 23.4, 27.6, 19.6, 6.8, 0.2, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 14.2, 22.0, 25.5, 18.0, 34.0, 34.5, 34.8, 21.0, 36.2, 29.5, 15.5, 16.8, 3.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.2, 12.2, 15.2, 18.8, 16.0, 32.4, 34.2, 33.0, 25.0, 46.6, 30.8, 38.4, 14.2, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 17.8, 23.0, 33.0, 19.2, 27.5, 31.5, 30.2, 26.8, 35.2, 37.5, 43.2, 9.5, 0.0, 0.0], [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 8.8, 7.4, 14.0, 16.6, 25.8, 24.4, 27.6, 18.8, 35.0, 21.2, 30.6, 16.6, 3.2, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8, 11.4, 20.0, 22.4, 14.6, 19.6, 32.4, 27.0, 24.6, 45.6, 22.8, 23.2, 17.2, 0.0, 0.0]], "heatDays": [5, 4, 5, 4, 0, 5, 5], "insights": [{"title": "Half the trucks stay more than a day", "text": "The typical Indian truck spends 23 h 19 min in the port from gate in to gate out; one truck in ten stays more than 90 h 35 min, and 5.4% stay more than five days."}, {"title": "The waiting is in two places", "text": "Between the posting record and the warehouse receipt (57% of the average stay) and between the weighbridge and the posting record (27%). Gate to weighbridge is 5 min and needs no attention."}, {"title": "Evening arrivals wait overnight", "text": "Trucks arriving at 17:00 or later have a typical stay of 24 h 40 min against 13 h 55 min for trucks arriving before noon. The busiest arrival hour is 18:00 and the gate records no entries between 23:00 and 9:00."}, {"title": "The shed matters more than the cargo weight", "text": "Typical stay ranges from 5 h 44 min at shed 31 to 49 h 04 min at shed 11 (sheds with at least 100 completed trips). Cargo weight barely matters by comparison: trucks over 30 t stay 24 h 59 min against 21 h 14 min for trucks under 10 t. Space and handling capacity, not weight, drive the time."}, {"title": "Thursday arrivals pay for the Friday closure", "text": "Trucks arriving on a Thursday stay typically 45 h 02 min, against 21 h 30 min for Wednesday arrivals: Friday has no port report and few exits."}, {"title": "The slow quarter is a different process", "text": "The quickest quarter of trucks leave within 10.4 hours; the slowest quarter stay 46.5 hours or more. The difference sits almost entirely in the posting and unloading waits: 49 h 29 min against 1 h 43 min for posting to receipt."}, {"title": "One truck in four has no recorded exit", "text": "Gate out is recorded for 74% of trips; gate in, weighing and weight for all of them. The process owner attributes the gap to the data extract; it should be re-pulled, because every time figure that ends at the exit is a lower bound until then."}, {"title": "Trucks whose Customs file is not done leave less often", "text": "17% of trips showed the assessment not done when the report was pulled; 63% of those had left, against 77% of trucks with the assessment done. The same pattern holds for duty payment (64% against 77%)."}, {"title": "Weighed weight is usually above the declared weight", "text": "On 74% of trips the weighbridge shows more than the declaration, typically by 180 kg; 37% are more than 500 kg over. This matters for the higher-weight billing rule, not for time."}]};
@@ -2139,7 +2483,7 @@ const OVERVIEW_HTML = `
 <tr><td class="k">BGB</td><td>Border Guard Bangladesh, the border security force.</td></tr>
 </tbody></table></div></div>`;
 /* ===================== re-engineering: today beside paperless, one card per step ===================== */
-state.tbl = { port:'ben', dir:'import', phase:'all', actor:'all', change:'all', time:'all', only:'all', q:'', open:{}, allOpen:false, mode:'cards' };
+state.tbl = { port:'ben', dir:'import', phase:'all', actor:'all', change:'all', time:'all', only:'all', q:'', open:{}, allOpen:false, mode:'table' };
 function tblReset(){ Object.assign(state.tbl, { phase:'all', actor:'all', change:'all', time:'all', only:'all', q:'' }); renderTable(); }
 function tblSet(k, v){ state.tbl[k] = v; if (k==='port' || k==='dir') { state.tbl.phase='all'; state.tbl.actor='all'; state.tbl.open={}; } renderTable(); }
 function tblToggle(key){ state.tbl.open[key] = !state.tbl.open[key]; const d = document.getElementById('rtd-'+key); const b = document.getElementById('rtb-'+key); if (d) d.hidden = !state.tbl.open[key]; if (b) b.textContent = state.tbl.open[key] ? 'Hide detail' : 'Full detail'; }
@@ -2199,13 +2543,14 @@ function deltaChips(r, port, dir){
 }
 function scoreboard(c, port, dir){
   const pct = (a, b) => a ? Math.round(100 * (a - b) / a) : 0;
-  const bar = (label, a, b, unit) => `<div class="ob"><div class="ob-top"><span class="ob-l">${label}</span><span class="ob-pct">${pct(a,b)>0?'down '+pct(a,b)+'%':'no change'}</span></div><div class="ob-bars"><div class="ob-row"><span>today</span><i style="width:100%"></i><b>${a}</b></div><div class="ob-row"><span>paperless</span><i class="after" style="width:${a?Math.max(2,Math.round(100*b/a)):0}%"></i><b>${b}</b></div></div><div class="ob-sub">${unit}</div></div>`;
+  const bar = (label, a, b, unit, fmt) => `<div class="ob"><div class="ob-top"><span class="ob-l">${label}</span><span class="ob-pct">${pct(a,b)>0?'down '+pct(a,b)+'%':'no change'}</span></div><div class="ob-bars"><div class="ob-row"><span>today</span><i style="width:100%"></i><b>${fmt?fmt(a):a}</b></div><div class="ob-row"><span>paperless</span><i class="after" style="width:${a?Math.max(2,Math.round(100*b/a)):0}%"></i><b>${fmt?fmt(b):b}</b></div></div><div class="ob-sub">${unit}</div></div>`;
+  const tm = timeTotals(port, dir, (c.rows||[]).filter(r => r.a).map(r => r.a), (c.rows||[]).filter(r => r.t).map(r => r.t));
   const sp = SPAG[port]; let walks = 0, walksGone = 0;
   const inRows = new Set((c.rows||[]).filter(r => r.a).map(r => r.a.id));
   if (sp && dir==='import') { const T = resolveSteps('tobe', dir, port); sp.travellers.filter(x => /foot/i.test(x.label)).forEach(x => x.moves.forEach(m => { if (!inRows.has(m.step)) return; walks++; const succ = T.filter(s => s.asis === m.step); if (!succ.length) { walksGone++; return; } const ch = timeToBe(port, dir, succ[0]).change; if (ch==='Removed' || ch==='Much shorter') walksGone++; })); }
   const kinds = ['Legal','Policy','Agreement','Integration','Internal'].filter(k => c.byType[k]).map(k => `<span class="tag ct-${k}">${c.byType[k]} ${esc(CHANGE_TYPES[k].label.toLowerCase())}</span>`).join('');
-  return `<div class="ob-grid">${bar('Paper or manual steps', c.manualA, c.manualT, 'steps done by hand or on paper')}${bar('Times paper is handled', c.docsA, c.docsT, 'a document presented, produced, carried or filed')}${bar('Signatures and stamps', c.signsA, c.signsT, 'signatures collected for one consignment')}${walks?bar('Walks between counters', walks, walks - walksGone, 'moves on foot by the C&F agent and the border man for one consignment'):''}
-    <div class="ob text"><div class="ob-l">Waiting</div><p>Today <b>${c.hot}</b> steps are rated High for waiting. The paperless process removes the wait or makes it much shorter at <b>${c.drop}</b> steps; physical work such as unloading and Customs examination stays.</p></div>
+  return `<div class="ob-grid">${bar('Paper or manual steps', c.manualA, c.manualT, 'steps done by hand or on paper')}${bar('Times paper is handled', c.docsA, c.docsT, 'a document presented, produced, carried or filed')}${bar('Signatures and stamps', c.signsA, c.signsT, 'signatures collected for one consignment')}${walks?bar('Walks between counters', walks, walks - walksGone, 'moves on foot by the C&F agent and the border man for one consignment'):''}${tm.today?bar('Time in the steps shown', tm.today, tm.after, `typical figures: ${fmtH(tm.measured + tm.indicative)} measured, ${fmtH(tm.assumed)} assumed today; after paperless assumed`, v => 'about ' + fmtH(v)):''}
+    <div class="ob text"><div class="ob-l">Waiting</div><p>Today <b>${c.hot}</b> steps carry a measured wait rated High. The paperless process removes the wait or makes it much shorter at <b>${c.drop}</b> steps; physical work such as unloading and Customs examination stays.</p></div>
     <div class="ob text"><div class="ob-l">Steps</div><p><b>${c.asis}</b> steps today and <b>${c.tobe}</b> after: <b>${c.removed}</b> disappear, <b>${c.added}</b> are new and <b>${c.changed}</b> change. The number of steps is not the measure; what disappears is the paper, the signatures and the walking.</p></div>
     <div class="ob text"><div class="ob-l">What the changes need</div><div class="kinds-row">${kinds}</div></div></div>`;
 }
@@ -2218,15 +2563,15 @@ function journeyStrip(port, dir, rows, phases){
 function cardHtml(r, port, dir, A, T, phases, key, open){
   const s = r.t || r.a; const ph = phases.find(p=>p.key===s.phase);
   const ta = r.a ? timeAsIs(port, dir, r.a) : null; const tt = r.t ? timeToBe(port, dir, r.t) : null;
-  const todayChip = r.a ? (timeChip(r.a, port, dir).replace('class="t', 'class="tag t') || '') : '';
-  const afterChip = r.kind==='removed' ? '<span class="tag t drop">time: removed with the step</span>' : (tt && tt.change!=='Same' ? `<span class="tag t ${changeClass(tt.change)||'same'}">time: ${esc(tt.change)}</span>` : (tt ? '<span class="tag t same">time: as today</span>' : ''));
+  const todayChip = r.a ? timeCellA(ta) : '';
+  const afterChip = r.kind==='removed' ? '<span class="tag t drop">0, removed with the step</span>' : (tt ? timeCellT(tt) : '');
   const kindChip = r.kind==='removed' ? '<span class="tag ch-removed">Step removed</span>' : r.kind==='new' ? `<span class="tag ct-${esc(r.t.change?.type||'')}">New · ${esc(r.t.change?CHANGE_TYPES[r.t.change.type]?.label:'')}</span>` : (r.t.change ? `<span class="tag ct-${esc(r.t.change.type)}">${esc(CHANGE_TYPES[r.t.change.type]?.label||r.t.change.type)}</span>` : '<span class="tag same">As today</span>');
   const needs = r.t && r.t.change ? `<div class="rc-needs"><div class="rc-lab">What it takes</div>${ruleChips(r.t.change.rule) || '<span class="tag ct-Internal">BLPA internal</span>'}${r.t.change.owner?`<div class="rc-owner"><b>Who decides:</b> ${esc(r.t.change.owner)}</div>`:''}${r.t.status?`<span class="tag st ${r.t.status==='PROPOSED'?'prop':'conf'}">${esc(r.t.status)}</span>`:''}</div>` : `<div class="rc-needs"><div class="rc-lab">What it takes</div><span class="muted">${r.kind==='removed'?'Nothing on its own: it goes with the successor steps.':'No change needed.'}</span></div>`;
   const q = CLIENT_MODE ? '' : [r.a?.validate?`<div><i>Today:</i> ${esc(r.a.validate)}</div>`:'', r.t?.validate?`<div><i>Paperless:</i> ${esc(r.t.validate)}</div>`:''].join('');
   return `<article class="rc ${r.kind}" id="rc-${key}">
     <div class="rc-head"><div class="rc-id"><span class="rc-ph">${ph?ph.n:''} · ${esc(ph?ph.label:'')}</span><span class="rc-ids">${stepIds(r)}</span><span class="rc-actor">${esc(actorLabel(s.actor))}</span></div><div class="rc-delta">${kindChip}${deltaChips(r, port, dir)}</div><button type="button" class="rt-exp" id="rtb-${key}" onclick="tblToggle('${key}')">${open?'Hide detail':'Full detail'}</button></div>
     <div class="rc-body">
-      <div class="rc-side today ${r.a&&r.a.manual?'paper':''}">${r.a?`<div class="rc-lab">Today</div><h4>${esc(r.a.title)}</h4><p>${esc(r.a.what)}</p>${stepFlags(r.a)}<div class="rc-time">${todayChip||'<span class="tag same">no wait reported</span>'}</div>`:`<div class="rc-lab">Today</div><div class="rc-empty">No step today: this is new in the paperless process.</div>`}</div>
+      <div class="rc-side today ${r.a&&r.a.manual?'paper':''}">${r.a?`<div class="rc-lab">Today</div><h4>${esc(r.a.title)}</h4><p>${esc(r.a.what)}</p>${stepFlags(r.a)}<div class="rc-time">${todayChip}</div>`:`<div class="rc-lab">Today</div><div class="rc-empty">No step today: this is new in the paperless process.</div>`}</div>
       <div class="rc-arrow"><span>→</span></div>
       <div class="rc-side paperless ${r.kind}">${r.t?`<div class="rc-lab">Paperless</div><h4>${esc(r.t.title)}</h4><p>${esc(r.t.what)}</p>${stepFlags(r.t)}<div class="rc-time">${afterChip}</div>`:`<div class="rc-lab">Paperless</div><div class="rc-empty removed">This step disappears. ${esc(ta&&ta.basis?('Today: '+timeSummary(ta)+'.'):'')}</div>`}</div>
       <div class="rc-change">${r.kind!=='removed' && r.t.change ? `<div class="rc-lab">What changes</div><p>${esc(r.t.change.what)}</p>` : (r.kind==='removed' ? '<div class="rc-lab">What changes</div><p>The walk, paper or counter visit this step represents is no longer needed.</p>' : '<div class="rc-lab">What changes</div><p class="muted">Nothing: as today.</p>')}${tt && tt.expect && tt.change!=='Same' ? `<p class="rc-exp"><b>Time:</b> ${esc(tt.expect)}</p>` : ''}${needs}${q?`<div class="rc-q"><b>To validate</b>${q}</div>`:''}</div>
@@ -2238,22 +2583,35 @@ function groupStats(rs, port, dir, actorKey){
   const A = rs.filter(r => r.a).map(r => r.a), T = rs.filter(r => r.t).map(r => r.t); const ids = new Set(A.map(s => s.id));
   const TRAV = { cf: ['cf'], drv: ['itruck', 'driver', 'ltruck'] }; const travKeys = actorKey === 'all' ? null : (TRAV[actorKey] || []); const sp = SPAG[port];
   let moves = 0; const places = new Set(); if (sp && dir === 'import') sp.travellers.forEach(tr => { if (travKeys && !travKeys.includes(tr.key)) return; tr.moves.forEach(m => { if (ids.has(m.step)) { moves++; places.add(m.from); places.add(m.to); } }); });
-  let measured = 0; const seen = new Set(); const waits = { High: 0, Medium: 0 };
-  A.forEach(s => { const x = timeAsIs(port, dir, s); if (x.role === 'end' && !seen.has(x.key)) { seen.add(x.key); measured += x.part.typical; } if (x.level === 'High' || x.level === 'Medium') waits[x.level]++; });
+  const tm = timeTotals(port, dir, A, T); const waits = { High: 0, Medium: 0 }; A.forEach(s => { const x = timeAsIs(port, dir, s); if (x.role === 'carry' && (x.level === 'High' || x.level === 'Medium')) waits[x.level]++; });
   const after = { Removed: 0, 'Much shorter': 0, Shorter: 0 }; T.forEach(s => { const ch = timeToBe(port, dir, s).change; if (after[ch] !== undefined) after[ch]++; }); after.Removed += rs.filter(r => r.kind === 'removed').length;
   const sum = (arr, f) => arr.reduce((n, s) => n + f(s), 0);
-  return { n: rs.length, stepsA: A.length, stepsT: T.length, paperA: A.filter(s => s.manual).length, paperT: T.filter(s => s.manual).length, docsA: sum(A, s => (s.docs||[]).length), docsT: sum(T, s => (s.docs||[]).length), signsA: sum(A, s => (s.signs||[]).length), signsT: sum(T, s => (s.signs||[]).length), moves, places: places.size, hasMoves: !!(sp && dir === 'import' && (actorKey === 'all' || (travKeys && travKeys.length))), measured, waits, after, rules: new Set(T.flatMap(s => s.change && s.change.rule ? s.change.rule.split(',').map(x => x.trim()) : [])).size };
+  return { n: rs.length, stepsA: A.length, stepsT: T.length, paperA: A.filter(s => s.manual).length, paperT: T.filter(s => s.manual).length, docsA: sum(A, s => (s.docs||[]).length), docsT: sum(T, s => (s.docs||[]).length), signsA: sum(A, s => (s.signs||[]).length), signsT: sum(T, s => (s.signs||[]).length), moves, places: places.size, hasMoves: !!(sp && dir === 'import' && (actorKey === 'all' || (travKeys && travKeys.length))), tm, waits, after, rules: new Set(T.flatMap(s => s.change && s.change.rule ? s.change.rule.split(',').map(x => x.trim()) : [])).size };
 }
 function subtotalRow(label, g, cls){
-  const timeA = [g.measured ? `${fmtDur(g.measured, false)} measured (spans closed here)` : '', (g.waits.High || g.waits.Medium) ? `waits: ${g.waits.High} High, ${g.waits.Medium} Medium` : ''].filter(Boolean).join('; ') || 'nothing timed or reported';
-  const timeT = [g.after.Removed ? `${g.after.Removed} removed` : '', g.after['Much shorter'] ? `${g.after['Much shorter']} much shorter` : '', g.after.Shorter ? `${g.after.Shorter} shorter` : ''].filter(Boolean).join(', ') || 'as today';
-  return `<tr class="rt-sub ${cls||''}"><td class="k">${esc(label)}</td><td>${g.stepsA} step${g.stepsA===1?'':'s'}${g.hasMoves ? `; ${g.moves} move${g.moves===1?'':'s'} between ${g.places} places` : ''}</td><td>${g.paperA} paper, ${g.stepsA - g.paperA} digital; ${g.docsA} document${g.docsA===1?'':'s'}, ${g.signsA} signature${g.signsA===1?'':'s'}</td><td>${esc(timeA)}</td><td>${g.stepsT} step${g.stepsT===1?'':'s'}</td><td>${g.paperT} paper, ${g.stepsT - g.paperT} digital; ${g.docsT} document${g.docsT===1?'':'s'}, ${g.signsT} signature${g.signsT===1?'':'s'}</td><td>${esc(timeT)}</td><td>${g.rules} rule${g.rules===1?'':'s'} to change</td></tr>`;
+  const kinds = [g.after.Removed ? `${g.after.Removed} removed` : '', g.after['Much shorter'] ? `${g.after['Much shorter']} much shorter` : '', g.after.Shorter ? `${g.after.Shorter} shorter` : ''].filter(Boolean).join(', ');
+  const saved = g.tm.today && g.tm.after < g.tm.today ? `<div class="rt-saved">about ${esc(fmtH(g.tm.today - g.tm.after))} less</div>` : '';
+  return `<tr class="rt-sub ${cls||''}"><td class="k">${esc(label)}</td><td>${g.stepsA} step${g.stepsA===1?'':'s'}${g.hasMoves ? `; ${g.moves} move${g.moves===1?'':'s'} between ${g.places} places` : ''}</td><td>${g.paperA} paper, ${g.stepsA - g.paperA} digital; ${g.docsA} document${g.docsA===1?'':'s'}, ${g.signsA} signature${g.signsA===1?'':'s'}</td><td>${fmtToday(g.tm)}${fmtCond(g.tm)}</td><td>${g.stepsT} step${g.stepsT===1?'':'s'}${kinds ? `; ${esc(kinds)}` : ''}</td><td>${g.paperT} paper, ${g.stepsT - g.paperT} digital; ${g.docsT} document${g.docsT===1?'':'s'}, ${g.signsT} signature${g.signsT===1?'':'s'}</td><td>${fmtAfter(g.tm)}${saved}</td><td>${g.rules} rule${g.rules===1?'':'s'} to change</td></tr>`;
+}
+function timeCellA(t){
+  if (t.role === 'carry') return `<b>${esc(fmtH(t.hours))}</b> <small>${t.basis === 'measured' ? 'measured' : 'Benapole figure'}</small> <span class="tag t ${levelClass(t.level)}">${esc(t.level)}</span>`;
+  if (t.role === 'start') return `timing starts${t.hours != null ? `; <b>about ${esc(fmtH(t.hours))}</b> <small>assumed</small>` : ''}`;
+  if (t.role === 'within' || t.role === 'moment') return `<span class="muted">inside the ${esc(fmtH(t.part.typical))} at step ${esc(t.part.at)}</span>`;
+  if (t.basis === 'assumed') return `<b>about ${esc(fmtH(t.hours))}</b> <small>assumed${t.cond ? ', when it applies' : ''}</small>`;
+  if (t.basis === 'reported') return t.hours != null ? `<b>${esc(fmtH(t.hours))} or more</b> <small>reported${t.cond ? ', when it applies' : ''}</small>` : '<span class="muted">wait reported, not timed</span>';
+  return '<span class="muted">not timed</span>';
+}
+function timeCellT(tt){
+  const chip = `<span class="tag t ${changeClass(tt.change)||'same'}">${esc(tt.change)}</span>`;
+  if (tt.hours != null) return `<b>about ${esc(fmtH(tt.hours))}</b> <small>assumed${tt.cond ? ', when it applies' : ''}</small> ${chip}`;
+  if (tt.role === 'within' || tt.role === 'moment') return `<span class="muted">inside the carrying step</span> ${tt.change !== 'Same' ? chip : ''}`;
+  return chip;
 }
 function paperCell(s){ if (!s) return ''; const parts = [s.manual ? '<span class="tag m">paper</span>' : '<span class="tag ok">digital</span>']; const nd = (s.docs||[]).length, ns = (s.signs||[]).length; if (nd) parts.push(`${nd} document${nd>1?'s':''}`); if (ns) parts.push(`${ns} signature${ns>1?'s':''}`); if (s.sys) parts.push(`<span class="muted">${esc(s.sys.module)}</span>`); return parts.join(' · '); }
 function tableRowHtml(r, port, dir, phases, key){
   const s = r.t || r.a; const tt = r.t ? timeToBe(port, dir, r.t) : null; const ta = r.a ? timeAsIs(port, dir, r.a) : null;
-  const timeA = r.a ? (ta.role === 'end' ? `+${esc(fmtDur(ta.part.typical, false))} since ${esc(momentName(ta.part.frm))} <span class="tag t ${levelClass(ta.level)}">${esc(ta.level)}</span>` : ta.role === 'start' ? 'timing starts' : ta.basis === 'reported' ? `wait <span class="tag t ${levelClass(ta.level)}">${esc(ta.level)}</span> (reported)` : ta.role === 'within' ? '<span class="muted">inside a timed span</span>' : '<span class="muted">none reported</span>') : '';
-  const timeT = r.kind === 'removed' ? '<span class="tag t drop">removed</span>' : (tt ? `<span class="tag t ${changeClass(tt.change)||'same'}">${esc(tt.change)}</span>` : '');
+  const timeA = r.a ? timeCellA(ta) : '';
+  const timeT = r.kind === 'removed' ? '<span class="tag t drop">0, step removed</span>' : (tt ? timeCellT(tt) : '');
   const needs = r.t && r.t.change ? `<span class="tag ct-${esc(r.t.change.type)}">${esc(CHANGE_TYPES[r.t.change.type]?.label||r.t.change.type)}</span>${r.t.change.rule?`<div class="rt-owner">${esc(r.t.change.rule)}${r.t.change.owner?' · decides: '+esc(r.t.change.owner):''}</div>`:''}` : (r.kind === 'removed' ? '<span class="muted">follows the successor steps</span>' : '<span class="muted">none</span>');
   return `<tr class="rt-row ${r.kind}" onclick="tblToggle('${key}')"><td class="rt-ph">${stepIds(r)}<br><small>${esc(actorLabel(s.actor))}</small></td>
     <td>${r.a?`<b>${esc(r.a.title)}</b>`:'<span class="muted">no step today</span>'}</td><td>${paperCell(r.a)}</td><td>${timeA}</td>
@@ -2267,35 +2625,39 @@ function groupedTable(vis, port, dir, phases, actorKey){
     rs.forEach(r => rowsHtml.push(tableRowHtml(r, port, dir, phases, `${port}-${dir}-${r.a?r.a.id:'x'}-${r.t?r.t.id:'x'}`.replace(/\./g,'_'))));
     rowsHtml.push(subtotalRow(`Subtotal, phase ${p.n}${actorKey!=='all'?' for '+actorLabel(actorKey):''}`, groupStats(rs, port, dir, actorKey))); });
   if (any) rowsHtml.push(subtotalRow(`Total${actorKey!=='all'?' for '+actorLabel(actorKey):''}, ${esc(PORTS[port].name)} ${esc(dir)}`, groupStats(vis, port, dir, actorKey), 'total'));
-  return `<div class="table-wrap retable compact"><table><thead><tr><th>Step · actor</th><th>Today: what happens</th><th>Today: paper or digital</th><th>Time today</th><th>Re-engineered step</th><th>After: paper or digital</th><th>Time after</th><th>Policy or rule needed</th></tr></thead><tbody>${any ? rowsHtml.join('') : '<tr><td colspan="8" class="muted">No steps match these filters.</td></tr>'}</tbody></table></div>`;
+  return `<div class="table-wrap retable compact"><table><thead><tr><th>Step and actor</th><th>Today: what happens</th><th>Today: paper or digital</th><th>Time today (typical)</th><th>Re-engineered step</th><th>After: paper or digital</th><th>Time after (assumed)</th><th>Policy or rule needed</th></tr></thead><tbody>${any ? rowsHtml.join('') : '<tr><td colspan="8" class="muted">No steps match these filters.</td></tr>'}</tbody></table></div>`;
+}
+function tblVisible(){
+  const S = state.tbl; const port = S.port, dir = S.dir; const rows = pairRows(port, dir); const q = S.q.trim().toLowerCase();
+  const vis = rows.filter(r => { const s = r.t || r.a; const ta = r.a ? timeAsIs(port,dir,r.a) : {basis:''}; const ct = r.kind==='removed' ? 'Removed' : (r.t.change ? r.t.change.type : 'none');
+    if (S.phase!=='all' && s.phase!==S.phase) return false; if (S.actor!=='all' && s.actor!==S.actor) return false; if (S.change!=='all' && ct!==S.change) return false;
+    if (S.time==='measured' && ta.role!=='carry') return false; if (S.time==='assumed' && ta.basis!=='assumed') return false; if (S.time==='any' && !(ta.hours != null)) return false; if (S.only==='changes' && r.kind==='same') return false;
+    if (q) { const hay = [r.a?.id, r.t?.id, r.a?.title, r.t?.title, r.a?.what, r.t?.what, r.t?.change?.what, r.t?.change?.rule, r.t?.change?.owner, actorLabel(s.actor)].join(' ').toLowerCase(); if (!hay.includes(q)) return false; }
+    return true; });
+  return { rows, vis };
 }
 function renderTable(){
   const el = document.getElementById('table-panel'); const S = state.tbl; const keep = { port: state.port, dir: state.dir }; state.port = S.port; state.dir = S.dir;
   try {
-    const port = S.port, dir = S.dir; const A = resolveSteps('asis', dir, port), T = resolveSteps('tobe', dir, port); const rows = pairRows(port, dir); const phases = phaseList(dir);
-    const actors = [...new Set(rows.map(r => (r.t||r.a).actor))].filter(a=>a!=='sys'); const q = S.q.trim().toLowerCase();
-    const vis = rows.filter(r => { const s = r.t || r.a; const ta = r.a ? timeAsIs(port,dir,r.a) : {level:''}; const ct = r.kind==='removed' ? 'Removed' : (r.t.change ? r.t.change.type : 'none');
-      if (S.phase!=='all' && s.phase!==S.phase) return false; if (S.actor!=='all' && s.actor!==S.actor) return false; if (S.change!=='all' && ct!==S.change) return false;
-      if (S.time!=='all' && ta.level!==S.time) return false; if (S.only==='changes' && r.kind==='same') return false;
-      if (q) { const hay = [r.a?.id, r.t?.id, r.a?.title, r.t?.title, r.a?.what, r.t?.what, r.t?.change?.what, r.t?.change?.rule, r.t?.change?.owner, actorLabel(s.actor)].join(' ').toLowerCase(); if (!hay.includes(q)) return false; }
-      return true; });
+    const port = S.port, dir = S.dir; const A = resolveSteps('asis', dir, port), T = resolveSteps('tobe', dir, port); const phases = phaseList(dir);
+    const { rows, vis } = tblVisible(); const actors = [...new Set(rows.map(r => (r.t||r.a).actor))].filter(a=>a!=='sys'); const q = S.q.trim().toLowerCase();
     const c = tblCounts(port, dir, vis);   // every number below follows the filters
     const seg = (key, opts) => `<span class="seg">${opts.map(([v,l]) => `<button type="button" aria-pressed="${S[key]===v}" onclick="tblSet('${key}','${v}')">${esc(l)}</button>`).join('')}</span>`;
     const portRows = Object.keys(PORTS).map(pk => { const ci = tblCounts(pk,'import'), ce = tblCounts(pk,'export'); const kinds = x => ['Legal','Policy','Agreement','Integration','Internal'].map(k=>x.byType[k]?`${x.byType[k]} ${k.toLowerCase()}`:'').filter(Boolean).join(', ');
       return `<tr class="${pk===port?'on':''}"><td class="k">${esc(PORTS[pk].name)}</td><td><b>${ci.asis} → ${ci.tobe}</b></td><td>${ci.removed} removed · ${ci.added} new · ${ci.changed} change</td><td>${ci.manualA} → ${ci.manualT}</td><td>${ci.signsA} → ${ci.signsT}</td><td>${ci.hot} → ${ci.drop}</td><td>${esc(kinds(ci))}</td><td><b>${ce.asis} → ${ce.tobe}</b></td><td>${ce.removed} removed · ${ce.added} new · ${ce.changed} change</td><td>${ce.manualA} → ${ce.manualT}</td><td>${ce.signsA} → ${ce.signsT}</td></tr>`; });
-    const toolbar = `<div class="toolbar"><div class="grp"><b>Port</b>${seg('port', Object.entries(PORTS).map(([k,p])=>[k,p.name]))}</div><div class="grp"><b>Direction</b>${seg('dir', [['import','Import'],['export','Export']])}</div><div class="grp"><b>Show</b>${seg('only', [['all','All steps'],['changes','Only what changes']])}</div><div class="grp"><b>View</b>${seg('mode', [['cards','Before → after cards'],['table','Compact table']])}</div>
+    const toolbar = `<div class="toolbar"><div class="grp"><b>Port</b>${seg('port', Object.entries(PORTS).map(([k,p])=>[k,p.name]))}</div><div class="grp"><b>Direction</b>${seg('dir', [['import','Import'],['export','Export']])}</div><div class="grp"><b>Show</b>${seg('only', [['all','All steps'],['changes','Only what changes']])}</div><div class="grp"><b>View</b>${seg('mode', [['table','Compact table'],['cards','Before and after cards']])}</div>
       <div class="grp"><b>Kind of change</b><select onchange="tblSet('change', this.value)"><option value="all">any</option>${['Legal','Policy','Agreement','Integration','Internal'].map(k=>`<option value="${k}" ${S.change===k?'selected':''}>${esc(CHANGE_TYPES[k].label)}</option>`).join('')}<option value="Removed" ${S.change==='Removed'?'selected':''}>Step removed</option><option value="none" ${S.change==='none'?'selected':''}>As today</option></select></div>
-      <div class="grp"><b>Time today</b><select onchange="tblSet('time', this.value)"><option value="all">any</option>${['High','Medium','Low'].map(k=>`<option value="${k}" ${S.time===k?'selected':''}>${k}</option>`).join('')}</select></div>
+      <div class="grp"><b>Time today</b><select onchange="tblSet('time', this.value)"><option value="all">all steps</option><option value="any" ${S.time==='any'?'selected':''}>steps with a figure</option><option value="measured" ${S.time==='measured'?'selected':''}>measured</option><option value="assumed" ${S.time==='assumed'?'selected':''}>assumed</option></select></div>
       <div class="grp"><b>Actor</b><select onchange="tblSet('actor', this.value)"><option value="all">all actors</option>${actors.map(a=>`<option value="${a}" ${S.actor===a?'selected':''}>${esc(actorLabel(a))}</option>`).join('')}</select></div>
       <div class="grp"><b>Search</b><input type="search" placeholder="step, word, rule…" value="${esc(S.q)}" oninput="state.tbl.q=this.value; renderTable(); const i=document.querySelector('#table-panel input[type=search]'); if(i){i.focus(); i.setSelectionRange(i.value.length,i.value.length);}"></div>
-      <div class="grp"><button type="button" class="rt-btn" onclick="tblOpenAll(true)">Expand all</button><button type="button" class="rt-btn" onclick="tblOpenAll(false)">Collapse all</button><button type="button" class="rt-btn" onclick="tblCsv()">Download CSV</button></div></div>`;
-    const active = [S.phase!=='all'?`phase ${phases.find(p=>p.key===S.phase)?.n}`:'', S.only==='changes'?'only what changes':'', S.change!=='all'?`kind: ${S.change}`:'', S.time!=='all'?`time today: ${S.time}`:'', S.actor!=='all'?`actor: ${actorLabel(S.actor)}`:'', q?`search: ${S.q}`:''].filter(Boolean);
+      <div class="grp"><button type="button" class="rt-btn" onclick="tblOpenAll(true)">Expand all</button><button type="button" class="rt-btn" onclick="tblOpenAll(false)">Collapse all</button><button type="button" class="rt-btn" onclick="tblCsv()">Download CSV (rows shown, with subtotals)</button></div></div>`;
+    const active = [S.phase!=='all'?`phase ${phases.find(p=>p.key===S.phase)?.n}`:'', S.only==='changes'?'only what changes':'', S.change!=='all'?`kind: ${S.change}`:'', S.time!=='all'?`time: ${S.time==='any'?'with a figure':S.time}`:'', S.actor!=='all'?`actor: ${actorLabel(S.actor)}`:'', q?`search: ${S.q}`:''].filter(Boolean);
     const strip = `<div class="quant-strip"><span class="q-chip">showing <b>${vis.length}</b> of ${rows.length} rows</span>${active.length?`<span class="q-chip filt">filtered by ${esc(active.join(', '))} <button type="button" class="rt-link" onclick="tblReset()">show all ${rows.length}</button></span>`:''}<span class="q-chip">steps today <b>${c.asis}</b></span><span class="q-chip chg">paperless <b>${c.tobe}</b></span><span class="q-chip hot">removed <b>${c.removed}</b></span><span class="q-chip chg">new <b>${c.added}</b></span><span class="q-chip chg">change <b>${c.changed}</b></span><span class="q-chip">as today <b>${c.same}</b></span></div>`;
     let body;
     if (S.mode === 'table') body = (S.actor !== 'all' ? actorSummaryHtml('asis', port, dir, S.actor) : '') + groupedTable(vis, port, dir, phases, S.actor);
     else body = `<div class="rc-list">${vis.map(r => { const key = `${port}-${dir}-${r.a?r.a.id:'x'}-${r.t?r.t.id:'x'}`.replace(/\./g,'_'); return cardHtml(r, port, dir, A, T, phases, key, S.allOpen || S.open[key]); }).join('') || '<p class="muted">No steps match these filters.</p>'}</div>`;
     el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Re-engineering: every step today beside its paperless step</h2>
-      <div class="note-draft"><b>Work in progress.</b> The paperless side is a proposal for discussion and validation, not a final design. Comments are welcome on every card.</div><p class="body">Read each card left to right: <b>today</b> on the left, <b>paperless</b> on the right, and on the far right <b>what changes, what it takes and who decides</b>. The badges at the top of a card summarise the difference at a glance: paper that goes, signatures that go, queues that go, and what happens to the waiting time. Pick a port and a direction; click a phase in the strip to focus on it; <b>Full detail</b> opens everything the map knows about both steps.</p>
+      <div class="note-draft"><b>Work in progress.</b> The paperless side is a proposal for discussion and validation, not a final design. Comments are welcome on every step.</div><p class="body">One row per step, grouped by stage: <b>today</b> on the left, the <b>re-engineered step</b> on the right, and the policy or rule it needs. Each stage ends with a subtotal and the table ends with a total; when an actor is chosen, the subtotals are for that actor alone. Click a row for the full detail of both steps. The time columns show a figure only where one exists: measured spans on the step where the time is spent, assumed figures elsewhere.</p>${TIME_CAVEAT()}
       <h3>${esc(PORTS[port].name)} · ${esc(dir)}: what the paperless process changes${vis.length<rows.length?` (the ${vis.length} steps shown)`:''}</h3>${scoreboard(c, port, dir)}
       ${journeyStrip(port, dir, rows, phases)}
       ${toolbar}${strip}${body}
@@ -2305,29 +2667,46 @@ function renderTable(){
   } finally { state.port = keep.port; state.dir = keep.dir; }
 }
 function tblCsv(){
-  const S = state.tbl; const port = S.port, dir = S.dir; const rows = pairRows(port, dir); const phases = phaseList(dir);
+  const S = state.tbl; const port = S.port, dir = S.dir; const phases = phaseList(dir);
   const keep = { port: state.port, dir: state.dir }; state.port = port; state.dir = dir;
-  const cell = v => '"' + String(v ?? '').replace(/"/g,'""').replace(/\s+/g,' ') + '"';
-  const head = ['Port','Direction','Phase','AS-IS step','TO-BE step','Actor','Kind','Today: title','Today: what happens','Today: paper step','Today: documents','Today: signatures','Today: system record','Time today','Why time today','Paperless: title','Paperless: what happens','Paperless: system record','Kind of change','What changes','Rule to change','Who decides','Expected time change','Why the time changes','Status','To validate (today)','To validate (paperless)'];
-  const lines = [head.map(cell).join(',')];
-  rows.forEach(r => { const s = r.t || r.a; const ph = phases.find(p=>p.key===s.phase); const ta = r.a ? timeAsIs(port,dir,r.a) : null; const tt = r.t ? timeToBe(port,dir,r.t) : null;
-    lines.push([PORTS[port].name, dir, ph?`${ph.n} ${ph.label}`:'', r.a?.id||'', r.t?.id||'', actorLabel(s.actor), r.kind, r.a?.title||'', r.a?.what||'', r.a?(r.a.manual?'yes':'no'):'', (r.a?.docs||[]).map(d=>`${DOCS[d.doc]?.name||d.doc}: ${d.action}`).join('; '), (r.a?.signs||[]).map(x=>`${x.by} ${x.type||'signs'} the ${DOCS[x.on]?.name||x.on}`).join('; '), r.a?.sys?`${r.a.sys.module}: ${r.a.sys.record}`:'', ta?timeSummary(ta):'', ta?.why||'', r.t?.title||'', r.t?.what||'', r.t?.sys?`${r.t.sys.module}: ${r.t.sys.record}`:'', r.kind==='removed'?'Step removed':(r.t?.change?.type||'As today'), r.t?.change?.what||'', r.t?.change?.rule||'', r.t?.change?.owner||'', r.kind==='removed'?'Removed':(tt?.change||''), tt?.expect||'', r.t?.status||'', r.a?.validate||'', r.t?.validate||''].map(cell).join(',')); });
-  state.port = keep.port; state.dir = keep.dir;
-  const blob = new Blob(['﻿' + lines.join('\r\n')], {type:'text/csv;charset=utf-8'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `BLPA_reengineering_${PORTS[port].name}_${dir}.csv`; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  try {
+    const { rows, vis } = tblVisible(); const actorKey = S.actor; const num = h => h == null ? '' : Math.round(h * 100) / 100;
+    const basisA = t => t.role === 'carry' ? t.basis : t.role === 'start' ? 'measured start' : (t.role === 'within' || t.role === 'moment') ? `inside the span carried at ${t.part.at}` : t.basis || '';
+    const head = ['Row type','Port','Direction','Phase no','Phase','Actor','AS-IS step','TO-BE step','Kind of row','Today: title','Today: what happens','Today: paper step','Today: documents handled','Today: signatures','Today: system record','Today: time (hours)','Today: time basis','Today: counted in totals','Today: time note','Paperless: title','Paperless: what happens','Paperless: paper step','Paperless: system record','Kind of change','What changes','Rule to change','Who decides','Expected change','After: time (hours, assumed)','After: how the figure is set','Status'];
+    const lines = [head];
+    const stepRow = r => { const s = r.t || r.a; const ph = phases.find(p=>p.key===s.phase); const ta = r.a ? timeAsIs(port,dir,r.a) : null; const tt = r.t ? timeToBe(port,dir,r.t) : null;
+      return ['step', PORTS[port].name, dir, ph?ph.n:'', ph?ph.label:'', actorLabel(s.actor), r.a?.id||'', r.t?.id||'', r.kind, r.a?.title||'', r.a?.what||'', r.a?(r.a.manual?'yes':'no'):'', (r.a?.docs||[]).map(d=>`${DOCS[d.doc]?.name||d.doc}: ${d.action}`).join('; '), (r.a?.signs||[]).map(x=>`${x.by} ${x.type||'signs'} the ${DOCS[x.on]?.name||x.on}`).join('; '), r.a?.sys?`${r.a.sys.module}: ${r.a.sys.record}`:'', ta?num(ta.hours):'', ta?basisA(ta):'', ta?(ta.hours!=null?(hoursOf(ta)?'yes':'no'):''):'', ta?(ta.note||ta.why||''):'', r.t?.title||'', r.t?.what||'', r.t?(r.t.manual?'yes':'no'):'', r.t?.sys?`${r.t.sys.module}: ${r.t.sys.record}`:'', r.kind==='removed'?'Step removed':(r.t?.change?.type||'As today'), r.t?.change?.what||'', r.t?.change?.rule||'', r.t?.change?.owner||'', r.kind==='removed'?'Removed':(tt?.change||''), r.kind==='removed'?0:(tt?num(tt.hours):''), tt?tt.how:'', r.t?.status||'']; };
+    const sumRow = (type, label, rs) => { const g = groupStats(rs, port, dir, actorKey); const ph = rs.length ? phases.find(p=>p.key===(rs[0].t||rs[0].a).phase) : null; const row = new Array(head.length).fill(''); row[0] = type; row[1] = PORTS[port].name; row[2] = dir; if (type === 'subtotal' && ph) { row[3] = ph.n; row[4] = ph.label; } row[5] = actorKey === 'all' ? 'all actors' : actorLabel(actorKey); row[9] = label; row[10] = `${g.stepsA} steps today; ${g.paperA} paper; ${g.docsA} documents; ${g.signsA} signatures${g.hasMoves?`; ${g.moves} moves between ${g.places} places`:''}`; row[15] = num(g.tm.today); row[16] = `${num(g.tm.measured + g.tm.indicative)} measured + ${num(g.tm.assumed)} assumed`; row[18] = g.tm.cond.length ? 'not counted: ' + g.tm.cond.map(c => `${c.id} ${num(c.hours)} h when it applies`).join('; ') : ''; row[19] = `${g.stepsT} steps after; ${g.paperT} paper; ${g.docsT} documents; ${g.signsT} signatures`; row[28] = num(g.tm.after); row[29] = 'assumed'; return row; };
+    phases.forEach(p => { const rs = vis.filter(r => (r.t||r.a).phase === p.key); if (!rs.length) return; rs.forEach(r => lines.push(stepRow(r))); lines.push(sumRow('subtotal', `Subtotal, phase ${p.n} ${p.label}`, rs)); });
+    if (vis.length) lines.push(sumRow('total', `Total, ${PORTS[port].name} ${dir}${actorKey!=='all'?' for '+actorLabel(actorKey):''}`, vis));
+    const filt = [S.phase!=='all'?'phase'+(phases.find(p=>p.key===S.phase)?.n||''):'', S.actor!=='all'?actorLabel(S.actor).replace(/[^a-z0-9]+/gi,'_'):'', S.only==='changes'?'changes':'', S.change!=='all'?S.change:'', S.time!=='all'?'time_'+S.time:''].filter(Boolean).join('_');
+    csvDownload(`BLPA_reengineering_${PORTS[port].name}_${dir}${filt?'_'+filt:''}.csv`, lines);
+  } finally { state.port = keep.port; state.dir = keep.dir; }
 }
 /* ===================== analytics tab: the process map with the month of Benapole data on it ===================== */
-const CH = { ink:'#2f3d36', muted:'#68756d', grid:'#e3e8e5', a:'#1f7a4d', b:'#2b6cb0', slow:'#c0392b', amber:'#b47d13', soft:'#cfe3d6' };
+const CH = { ink:'#2f3d36', muted:'#68756d', grid:'#e3e8e5', a:'#1f7a4d', b:'#2b6cb0', slow:'#c0392b', amber:'#b47d13', soft:'#cfe3d6', asm:'#9aa8a0', after:'#7fc59d' };
+const SPANC = { wb:'#0e7490', post:'#7c3aed', recv:'#1f7a4d', exit:'#b47d13' };
 const MONTH_CAP = () => `<p class="cap">One month of data: ${esc(ANALYTICS.meta.frm)} to ${esc(ANALYTICS.meta.to)}, ${ANALYTICS.meta.covered} reporting days out of ${ANALYTICS.meta.days}; ${ANALYTICS.meta.trips.toLocaleString()} Indian truck trips.</p>`;
 function lvlColor(l){ return l === 'High' ? CH.slow : l === 'Medium' ? CH.amber : CH.a; }
+function fmtShort(h){ if (h == null) return ''; const m = Math.round(h * 60); if (m < 60) return m + ' min'; return `${Math.floor(m / 60)} h${m % 60 ? ' ' + String(m % 60).padStart(2, '0') : ''}`; }
+const HALO = 'paint-order="stroke" stroke="#fff" stroke-width="3.5" stroke-linejoin="round"';
 function chartLine(series, cats, opt){
-  const w = opt.w || 900, h = opt.h || 220, padL = 52, padB = 40, padT = 14, padR = 10; const plotW = w - padL - padR, plotH = h - padT - padB;
+  const w = opt.w || 900, h = opt.h || 220, padL = 52, padB = 40, padT = 22, padR = 10; const plotW = w - padL - padR, plotH = h - padT - padB;
   const max = opt.max || Math.max(...series.flatMap(s => s.values.map(v => v || 0))) || 1; const n = cats.length; const x = i => padL + (n === 1 ? 0 : plotW * i / (n - 1)); const y = v => padT + plotH - plotH * v / max;
   const ticks = opt.ticks || 4; const grid = Array.from({ length: ticks + 1 }, (_, i) => { const v = max * i / ticks; const yy = padT + plotH - plotH * i / ticks; return `<line x1="${padL}" x2="${w - padR}" y1="${yy}" y2="${yy}" stroke="${CH.grid}"/><text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="11" fill="${CH.muted}">${opt.fmtTick ? esc(opt.fmtTick(v)) : Math.round(v)}</text>`; }).join('');
   const bandW = plotW / Math.max(1, n - 1);
   const missing = (opt.missing || []).map(i => `<rect x="${x(i) - bandW / 2}" y="${padT}" width="${bandW}" height="${plotH}" fill="#f6e4e4"><title>${esc(cats[i])}: no report</title></rect>`).join('');
   const marks = (opt.marks || []).map(i => `<rect x="${x(i) - bandW / 2}" y="${padT}" width="${bandW}" height="${plotH}" fill="#fff4d8"><title>${esc(cats[i])}: ${esc(opt.markLabel || '')}</title></rect>`).join('');
-  const paths = series.map(s => { let d = '', pen = false; s.values.forEach((v, i) => { if (v == null) { pen = false; return; } d += (pen ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v).toFixed(1); pen = true; }); const dots = s.values.map((v, i) => v == null ? '' : `<circle cx="${x(i)}" cy="${y(v)}" r="3.2" fill="${s.color}" stroke="#fff" stroke-width="1.5"><title>${esc(cats[i])} · ${esc(s.name)}: ${esc(opt.fmt ? opt.fmt(v) : v)}</title></circle>`).join(''); return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2"/>${dots}`; }).join('');
-  const ref = opt.ref != null ? `<line x1="${padL}" x2="${w - padR}" y1="${y(opt.ref)}" y2="${y(opt.ref)}" stroke="${CH.ink}" stroke-dasharray="4 3"/><text x="${w - padR}" y="${y(opt.ref) - 6}" text-anchor="end" font-size="11" fill="${CH.ink}" paint-order="stroke" stroke="#fff" stroke-width="4" stroke-linejoin="round">${esc(opt.refLabel || '')}</text>` : '';
+  const labelFmt = opt.fmtLabel || opt.fmt || (v => v);
+  const paths = series.map(s => { let d = '', pen = false; s.values.forEach((v, i) => { if (v == null) { pen = false; return; } d += (pen ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v).toFixed(1); pen = true; });
+    const dots = s.values.map((v, i) => v == null ? '' : `<circle cx="${x(i)}" cy="${y(v)}" r="3.2" fill="${s.color}" stroke="#fff" stroke-width="1.5"><title>${esc(cats[i])} · ${esc(s.name)}: ${esc(opt.fmt ? opt.fmt(v) : v)}</title></circle>`).join('');
+    let idx = [];
+    if (opt.labels === 'all') idx = s.values.map((v, i) => v == null ? -1 : i).filter(i => i >= 0);
+    else if (Array.isArray(opt.labels)) idx = opt.labels;
+    else { const vals = s.values.map((v, i) => [v, i]).filter(p => p[0] != null); if (vals.length) { const mx = vals.reduce((a, b) => b[0] > a[0] ? b : a), mn = vals.reduce((a, b) => b[0] < a[0] ? b : a); idx = [...new Set([mx[1], mn[1], ...(opt.labelIdx || [])])]; } }
+    const labs = idx.map(i => { const v = s.values[i]; if (v == null) return ''; const above = opt.labels === 'all' ? (i % 2 === 0) : (v > max / 2); const yy = above ? y(v) - 8 : y(v) + 15; return `<text x="${x(i)}" y="${yy}" text-anchor="middle" font-size="10.5" font-weight="700" fill="${s.color}" ${HALO}>${esc(labelFmt(v))}</text>`; }).join('');
+    return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2"/>${dots}${labs}`; }).join('');
+  const ref = opt.ref != null ? `<line x1="${padL}" x2="${w - padR}" y1="${y(opt.ref)}" y2="${y(opt.ref)}" stroke="${CH.ink}" stroke-dasharray="4 3"/><text x="${padL + 4}" y="${y(opt.ref) - 6}" font-size="11" fill="${CH.ink}" ${HALO}>${esc(opt.refLabel || '')}</text>` : '';
   const every = opt.every || 1; const labels = cats.map((c, i) => i % every === 0 ? `<text x="${x(i)}" y="${h - padB + 16}" text-anchor="middle" font-size="11" fill="${CH.muted}">${esc(c)}</text>` : '').join('');
   let lx = padL; const legend = `<g>${series.length > 1 || opt.legendAlways ? series.map(s => { const x0 = lx; lx += 22 + s.name.length * 6.3; return `<rect x="${x0}" y="${h - 10}" width="12" height="12" fill="${s.color}" rx="2"/><text x="${x0 + 16}" y="${h}" font-size="11" fill="${CH.ink}">${esc(s.name)}</text>`; }).join('') : ''}${opt.missing && opt.missing.length ? `<rect x="${lx}" y="${h - 10}" width="12" height="12" fill="#f6e4e4"/><text x="${lx + 16}" y="${h}" font-size="11" fill="${CH.ink}">no report that day</text>` : ''}${opt.marks && opt.marks.length ? `<rect x="${lx + 140}" y="${h - 10}" width="12" height="12" fill="#fff4d8"/><text x="${lx + 156}" y="${h}" font-size="11" fill="${CH.ink}">${esc(opt.markLabel || '')}</text>` : ''}</g>`;
   return `<svg class="chart" viewBox="0 0 ${w} ${h + 6}" width="${w}" role="img" aria-label="${esc(opt.aria || '')}">${grid}${missing}${marks}<line x1="${padL}" x2="${w - padR}" y1="${padT + plotH}" y2="${padT + plotH}" stroke="#9aa8a0"/>${ref}${paths}${labels}${legend}</svg>`;
@@ -2339,94 +2718,141 @@ function chartHeat(grid, rowLabels, colLabels, opt){
   const cl = colLabels.map((l, c) => c % 2 === 0 ? `<text x="${labW + c * cw + (cw - 2) / 2}" y="${7 * chh + 16}" text-anchor="middle" font-size="11" fill="${CH.muted}">${esc(l)}</text>` : '').join('');
   return `<svg class="chart" viewBox="0 0 ${w} ${h}" width="${w}" role="img" aria-label="${esc(opt.aria || '')}">${cells}${rl}${cl}</svg>`;
 }
+/* horizontal bars with the number written at the end of every bar. rows: [{label, sub, bars:[{v, color, text, dash}], note}] */
+function chartHBars(rows, opt){
+  const w = opt.w || 1000, labW = opt.labW || 250, barH = 15, gap = 4, padT = 8, padR = 330; const plotW = w - labW - padR;
+  const max = opt.max || Math.max(...rows.flatMap(r => r.bars.map(b => b.v || 0))) || 1;
+  let y = padT, out = '';
+  rows.forEach(r => { const hgt = Math.max(1, r.bars.length) * (barH + gap) + 8 + (r.note && r.bars.length ? 12 : 0); const midY = y + (r.bars.length ? Math.max(1, r.bars.length) * (barH + gap) + 8 : hgt) / 2;
+    out += `<text x="${labW - 12}" y="${midY - (r.sub ? 2 : -4)}" text-anchor="end" font-size="12" font-weight="700" fill="${CH.ink}">${esc(r.label)}</text>${r.sub ? `<text x="${labW - 12}" y="${midY + 12}" text-anchor="end" font-size="10.5" fill="${CH.muted}">${esc(r.sub)}</text>` : ''}`;
+    let by = y + 4;
+    if (!r.bars.length) out += `<text x="${labW}" y="${by + 12}" font-size="11" fill="${CH.muted}">${esc(r.note || '')}</text>`;
+    r.bars.forEach(b => { const wid = Math.max(2, plotW * (b.v || 0) / max); out += `<rect x="${labW}" y="${by}" width="${wid}" height="${barH}" rx="3" fill="${b.color}" ${b.dash ? 'opacity=".55"' : ''}><title>${esc(b.text || '')}</title></rect><text x="${labW + wid + 6}" y="${by + barH - 3}" font-size="11" font-weight="700" fill="${CH.ink}">${esc(b.text || '')}</text>`; by += barH + gap; });
+    if (r.bars.length && r.note) out += `<text x="${labW}" y="${by + 9}" font-size="10" fill="${CH.muted}">${esc(r.note)}</text>`;
+    y += hgt; out += `<line x1="0" x2="${w}" y1="${y}" y2="${y}" stroke="${CH.grid}"/>`; });
+  return `<svg class="chart" viewBox="0 0 ${w} ${y + 4}" width="${w}" role="img" aria-label="${esc(opt.aria || '')}">${out}</svg>`;
+}
 function openBen(id){ state.port = 'ben'; state.dir = 'import'; ['asis','tobe'].forEach(v => { const p = document.getElementById(v + '-panel'); if (p.hidden) p.dataset.stale = '1'; }); openStep('asis', id); }
+/* the journey drawn to scale for three kinds of truck; each segment is one measured span, coloured by span; the numbers sit in the table below */
 function journeyRuler(){
   const P = TIME.parts; const spans = ['wb', 'post', 'recv', 'exit']; const MOM = [['2.2', 'Gate in'], ['3.2', 'Weighbridge'], ['4.3', 'Posting record'], ['5.2', 'Warehouse receipt'], ['7.2', 'Gate out']];
   const rowsDef = [['Quickest quarter of trucks', k => P[k].quick], ['Typical truck', k => P[k].typical], ['Slowest quarter of trucks', k => P[k].slowq]];
-  const w = 1120, labW = 210, totW = 130, plotW = w - labW - totW - 20, rowH = 74, top = 34; const maxTotal = Math.max(...rowsDef.map(r => spans.reduce((n, k) => n + r[1](k), 0))); const sc = plotW / maxTotal;
-  let out = `<text x="${labW}" y="14" font-size="11" fill="${CH.muted}">Bar length is time. Each segment is the time between two moments the port records, coloured by the wait rating of that part (red High, amber Medium, green Low). Click a moment to open its step.</text>`;
-  rowsDef.forEach((r, ri) => { const y = top + ri * rowH; let x = labW; out += `<text x="${labW - 10}" y="${y + 24}" text-anchor="end" font-size="12.5" font-weight="700" fill="${CH.ink}">${esc(r[0])}</text>`;
-    const mom = (si, xx) => { const m = MOM[si]; return `<g class="mom" onclick="openBen('${m[0]}')" style="cursor:pointer"><circle cx="${xx}" cy="${y + 21}" r="5" fill="#fff" stroke="${CH.ink}" stroke-width="1.5"/>${ri === 1 ? `<text x="${xx}" y="${y - 4}" text-anchor="middle" font-size="10.5" font-weight="700" fill="${CH.ink}">${esc(m[1])} <tspan fill="#1d4ed8">${m[0]}</tspan></text>` : ''}</g>`; };
-    spans.forEach((k, si) => { const hrs = r[1](k); const wid = Math.max(2, hrs * sc); out += `<rect x="${x}" y="${y + 10}" width="${Math.max(1, wid - 1.5)}" height="22" fill="${lvlColor(P[k].level)}" rx="3"><title>${esc(P[k].label)}: ${esc(fmtDur(hrs, false))}</title></rect>`; if (wid > 58) out += `<text x="${x + wid / 2}" y="${y + 25}" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">${esc(fmtDur(hrs, false))}</text>`; else if (wid > 14) out += `<text x="${x + wid / 2}" y="${y + 48}" text-anchor="middle" font-size="10" fill="${CH.muted}">${esc(fmtDur(hrs, false))}</text>`; out += mom(si, x); x += wid; });
-    out += mom(4, x); const total = spans.reduce((n, k) => n + r[1](k), 0); out += `<text x="${x + 12}" y="${y + 25}" font-size="12" font-weight="800" fill="${CH.ink}">${esc(fmtDur(total, false))}</text>`; });
-  return `<svg class="chart" viewBox="0 0 ${w} ${top + 3 * rowH}" width="${w}" role="img" aria-label="Time between the recorded moments for quick, typical and slow trucks">${out}</svg>`;
+  const w = 1120, labW = 210, totW = 150, plotW = w - labW - totW - 20, rowH = 46, top = 62; const maxTotal = Math.max(...rowsDef.map(r => spans.reduce((n, k) => n + r[1](k), 0))); const sc = plotW / maxTotal;
+  let out = ''; spans.forEach((k, i) => { const lx = labW + (i % 2) * 330, ly = 6 + Math.floor(i / 2) * 16; out += `<rect x="${lx}" y="${ly}" width="12" height="12" rx="2" fill="${SPANC[k]}"/><text x="${lx + 16}" y="${ly + 10}" font-size="11" fill="${CH.ink}">${esc(P[k].label)} (${esc(P[k].span)})</text>`; });
+  out += `<text x="${labW}" y="50" font-size="11" fill="${CH.muted}">Bar length is time, to scale. The circles are the recorded moments; click one to open its step. The figures are in the table below.</text>`;
+  rowsDef.forEach((r, ri) => { const y = top + ri * rowH; let x = labW; out += `<text x="${labW - 10}" y="${y + 20}" text-anchor="end" font-size="12.5" font-weight="700" fill="${CH.ink}">${esc(r[0])}</text>`;
+    const mom = (si, xx) => { const m = MOM[si]; return `<g class="mom" onclick="openBen('${m[0]}')" style="cursor:pointer"><circle cx="${xx}" cy="${y + 16}" r="5" fill="#fff" stroke="${CH.ink}" stroke-width="1.5"><title>${esc(m[1])} (step ${m[0]})</title></circle></g>`; };
+    spans.forEach((k, si) => { const hrs = r[1](k); const wid = Math.max(2, hrs * sc); out += `<rect x="${x}" y="${y + 6}" width="${Math.max(1, wid - 1.5)}" height="20" fill="${SPANC[k]}" rx="3"><title>${esc(P[k].label)}: ${esc(fmtDur(hrs, false))}</title></rect>`; if (wid > 64) out += `<text x="${x + wid / 2}" y="${y + 20}" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">${esc(fmtShort(hrs))}</text>`; out += mom(si, x); x += wid; });
+    out += mom(4, x); const total = spans.reduce((n, k) => n + r[1](k), 0); out += `<text x="${x + 12}" y="${y + 20}" font-size="12" font-weight="800" fill="${CH.ink}">${esc(fmtDur(total, false))}</text>`; });
+  const svg = `<svg class="chart" viewBox="0 0 ${w} ${top + 3 * rowH}" width="${w}" role="img" aria-label="Time between the recorded moments for quick, typical and slow trucks">${out}</svg>`;
+  const L = id => `<a class="steplink" href="#" onclick="event.preventDefault();openBen('${id}')">${id}</a>`;
+  const head = ['Kind of truck', ...spans.map(k => `<span class="sw" style="background:${SPANC[k]}"></span>${esc(P[k].label)}<br><small>carried by step ${L(P[k].at)}</small>`), 'Gate in to gate out'];
+  const rows = rowsDef.map(r => `<tr><td class="k">${esc(r[0])}</td>${spans.map(k => `<td><b>${esc(fmtDur(r[1](k), false))}</b></td>`).join('')}<td><b>${esc(fmtDur(spans.reduce((n, k) => n + r[1](k), 0), false))}</b></td></tr>`);
+  rows.push(`<tr><td class="k">One truck in ten waits longer than</td>${spans.map(k => `<td>${esc(fmtDur(P[k].slow, false))}</td>`).join('')}<td>${esc(fmtDur(P.stay.slow, false))}</td></tr>`);
+  rows.push(`<tr><td class="k">Rating and share of the average stay</td>${spans.map(k => `<td><span class="tag t ${levelClass(P[k].level)}">${P[k].level}</span> ${P[k].share}%</td>`).join('')}<td></td></tr>`);
+  return svg + xtable(head, rows, 900, 'BLPA_analytics_journey');
+}
+/* the map's phases with the time each one carries: measured spans in colour, assumptions in grey */
+function phaseChart(){
+  const steps = resolveSteps('asis', 'import', 'ben');
+  const rows = phaseList('import').map(p => { const ps = steps.filter(s => s.phase === p.key); const bars = []; let note = '';
+    ps.forEach(s => { const t = timeAsIs('ben', 'import', s); if (t.role === 'carry') bars.push({ v: t.hours, color: SPANC[t.key], text: `${fmtShort(t.hours)} measured at step ${s.id}; one truck in ten over ${fmtShort(t.part.slow)}` }); });
+    const r = timeTotals('ben', 'import', ps, []); if (r.assumed) bars.push({ v: r.assumed, color: CH.asm, dash: true, text: `${fmtShort(r.assumed)} assumed across ${ps.filter(s => { const t = timeAsIs('ben','import',s); return t.basis === 'assumed' && !t.cond && t.role !== 'carry'; }).map(s => s.id).join(', ')}` });
+    if (r.cond.length) note = 'when it applies: ' + r.cond.map(c => `${fmtH(c.hours)} at ${c.id}`).join(', ') + ' (not in the bars)';
+    if (!bars.length && !note) note = p.key === 'ts' ? 'perishables: the transfer sits inside the span carried at step 5.1' : 'nothing timed and nothing assumed';
+    return { label: `Phase ${p.n} · ${p.label}`, sub: `${ps.length} steps`, bars, note }; });
+  return chartHBars(rows, { aria: 'Time carried by each phase of the process map', labW: 330, w: 1100 });
+}
+/* today against after paperless, phase by phase, from the same figures as the re-engineering table */
+function savingChart(){
+  const A = resolveSteps('asis', 'import', 'ben'), T = resolveSteps('tobe', 'import', 'ben');
+  const rows = phaseList('import').map(p => { const ps = A.filter(s => s.phase === p.key); const ts = T.filter(s => s.phase === p.key); const r = timeTotals('ben', 'import', ps, ts); if (!r.today && !r.after) return null;
+    return { label: `Phase ${p.n} · ${p.label}`, bars: [{ v: r.today, color: CH.a, text: `today about ${fmtShort(r.today)}${r.measured ? ` (${fmtShort(r.measured)} measured)` : ' (assumed)'}` }, { v: r.after, color: CH.after, text: `after paperless about ${fmtShort(r.after)} (assumed)` }] }; }).filter(Boolean);
+  const all = timeTotals('ben', 'import', A, T); rows.push({ label: 'All phases together', bars: [{ v: all.today, color: CH.a, text: `today about ${fmtShort(all.today)}` }, { v: all.after, color: CH.after, text: `after paperless about ${fmtShort(all.after)}: about ${fmtShort(all.today - all.after)} less` }] });
+  return chartHBars(rows, { aria: 'Time today and after paperless by phase', labW: 330, w: 1100 });
 }
 function phaseTimeTable(){
-  const steps = resolveSteps('asis', 'import', 'ben'); const P = TIME.parts;
-  const why = { pre: 'Before the gate: the Indian-side queue and the zero-point checks are outside the data.', cus: 'Customs, agencies and the bank are not in the port data; the waits here are reported (laboratory tests over ten days, bank hours).', load: 'The local truck is not in ISLAS.', bill: 'The local truck is not in ISLAS, so the billing, payment and exit-pass waits are reported, not measured.', ts: 'Only the warehouse receipt moment is recorded; the transfer itself is not timed.' };
-  const rows = phaseList('import').map(p => { const ps = steps.filter(s => s.phase === p.key); const ends = ps.filter(s => TIME.endStep[s.id]).map(s => TIME.endStep[s.id]); const rep = {}; ps.forEach(s => { const t = timeAsIs('ben', 'import', s); if (t.basis === 'reported' && (t.level === 'High' || t.level === 'Medium')) rep[t.level] = (rep[t.level] || 0) + 1; });
-    const timed = ends.length ? ends.map(k => `${esc(momentName(P[k].to))} (step ${P[k].to}): typically <b>${esc(fmtDur(P[k].typical, false))}</b> after ${esc(momentName(P[k].frm))} (step ${P[k].frm}); one in ten over ${esc(fmtDur(P[k].slow, false))} <span class="tag t ${levelClass(P[k].level)}">${P[k].level}</span>`).join('<br>') : (ps.some(s => s.id === '2.2') ? 'the timing starts here (gate in, step 2.2)' : '<span class="muted">nothing recorded by ISLAS in this phase</span>');
-    return `<tr><td class="k">Phase ${p.n} · ${esc(p.label)}</td><td>${ps.length}</td><td>${timed}</td><td>${Object.keys(rep).length ? Object.entries(rep).map(([l, n]) => `${n} ${l}`).join(', ') : '<span class="muted">none</span>'}</td><td>${esc(why[p.key] || '')}</td></tr>`; });
-  return table(['Phase of the process map', 'Steps', 'What the data times in this phase (typical truck)', 'Reported waits', 'Why nothing more is measured'], rows, 1000);
+  const steps = resolveSteps('asis', 'import', 'ben');
+  const why = { pre: 'Before the gate: the Indian-side queue is outside the data; the stops at zero point and the Customs cabin are assumed.', gate: 'The timing starts when the gate keys the entry; the queue at the window before that is assumed.', cus: 'Customs, the agencies and the bank are not in the port data; assumed from site visits.', load: 'The local truck is not in ISLAS; assumed.', bill: 'The local truck is not in ISLAS; the billing, payment and exit-pass steps are assumed.', ts: 'Only the warehouse receipt moment is recorded; for perishables the transfer sits inside the span carried at step 5.1.', wh: 'Unloading carries the biggest measured span; the Customs file check and examination are assumed; laboratory tests are reported by the port.' };
+  const rows = phaseList('import').map(p => { const ps = steps.filter(s => s.phase === p.key); const carries = ps.filter(s => timeAsIs('ben', 'import', s).role === 'carry'); const r = timeTotals('ben', 'import', ps, []);
+    const timed = carries.length ? carries.map(s => { const t = timeAsIs('ben', 'import', s); return `<b>${esc(fmtDur(t.hours, false))}</b> measured, carried by step ${s.id} (${esc(t.part.label.toLowerCase())}); one truck in ten over ${esc(fmtDur(t.part.slow, false))} <span class="tag t ${levelClass(t.level)}">${t.level}</span>`; }).join('<br>') : (ps.some(s => s.id === '2.2') ? 'the timing starts here (gate in, step 2.2)' : '<span class="muted">nothing measured in this phase</span>');
+    return `<tr><td class="k">Phase ${p.n} · ${esc(p.label)}</td><td>${ps.length}</td><td>${timed}</td><td>${r.assumed ? `about ${esc(fmtH(r.assumed))}` : '<span class="muted">none</span>'}${r.cond.length ? `<div class="cond">+ ${esc(r.cond.map(c => `${fmtH(c.hours)} at ${c.id} when it applies`).join('; '))}</div>` : ''}</td><td>${esc(why[p.key] || '')}</td></tr>`; });
+  return xtable(['Phase of the process map', 'Steps', 'Measured time (typical truck)', 'Assumed time', 'Why nothing more is measured'], rows, 1000, 'BLPA_analytics_phases');
 }
 function tableBars(items, cols, opt){
   const max = Math.max(...items.map(i => i[opt.barKey] || 0)) || 1;
   const head = cols.map(c => `<th>${esc(c.label)}</th>`).join('');
   const rows = items.map(it => `<tr>${cols.map(c => { const v = it[c.key]; if (c.bar) { const pct = Math.round(100 * (v || 0) / max); return `<td><div class="tb"><i style="width:${pct}%;background:${it.hi ? CH.slow : CH.a}"></i><b>${esc(c.fmt ? c.fmt(v, it) : v)}</b></div></td>`; } return `<td>${esc(c.fmt ? c.fmt(v, it) : (v ?? ''))}</td>`; }).join('')}</tr>`).join('');
-  return `<div class="table-wrap"><table class="tbt"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  return xwrap(`<div class="table-wrap"><table class="tbt"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`, opt.name || 'BLPA_analytics_table');
 }
 function tile(v, l, cls=''){ return `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`; }
+function actorPair(port, dir, actorKey){ const A = resolveSteps('asis', dir, port).filter(s => actorKey === 'all' ? s.actor !== 'sys' : s.actor === actorKey); const ids = new Set(A.map(s => s.id)); const T = resolveSteps('tobe', dir, port).filter(s => (s.asis && ids.has(s.asis)) || (!s.asis && (actorKey === 'all' ? s.actor !== 'sys' : s.actor === actorKey))); return { A, T }; }
 function actorStats(view, port, dir, actorKey){
-  const steps = resolveSteps(view, dir, port).filter(s => actorKey === 'all' ? s.actor !== 'sys' : s.actor === actorKey); const ids = new Set(steps.map(s => s.id));
+  const { A, T } = actorPair(port, dir, actorKey); const steps = view === 'asis' ? A : resolveSteps('tobe', dir, port).filter(s => actorKey === 'all' ? s.actor !== 'sys' : s.actor === actorKey); const ids = new Set(A.map(s => s.id));
   const TRAV = { cf: ['cf'], drv: ['itruck', 'driver', 'ltruck'] }; const travKeys = actorKey === 'all' ? null : (TRAV[actorKey] || []);
   let moves = 0, places = new Set(); const sp = SPAG[port];
-  if (sp && dir === 'import' && view === 'asis') sp.travellers.forEach(t => { if (travKeys && !travKeys.includes(t.key)) return; t.moves.forEach(m => { if (ids.has(m.step)) { moves++; places.add(m.from); places.add(m.to); } }); });
-  const waits = { High: 0, Medium: 0 }; let measured = 0; const seen = new Set();
-  steps.forEach(s => { const t = view === 'asis' ? timeAsIs(port, dir, s) : (timeToBe(port, dir, s).today || { level: '' }); if (t.level === 'High' || t.level === 'Medium') waits[t.level]++; if (view === 'asis' && t.role === 'end' && !seen.has(t.key)) { seen.add(t.key); measured += t.part.typical; } });
-  const drop = view === 'tobe' ? steps.filter(s => ['Removed', 'Much shorter'].includes(timeToBe(port, dir, s).change)).length : 0;
-  return { steps: steps.length, paper: steps.filter(s => s.manual).length, docs: steps.reduce((n, s) => n + (s.docs || []).length, 0), signs: steps.reduce((n, s) => n + (s.signs || []).length, 0), moves, places: places.size, waits, measured, drop, hasSpag: !!(sp && dir === 'import' && (actorKey === 'all' || (travKeys && travKeys.length))) };
+  if (sp && dir === 'import') sp.travellers.forEach(t => { if (travKeys && !travKeys.includes(t.key)) return; t.moves.forEach(m => { if (ids.has(m.step)) { moves++; places.add(m.from); places.add(m.to); } }); });
+  const tm = timeTotals(port, dir, A, T); const drop = T.filter(s => ['Removed', 'Much shorter'].includes(timeToBe(port, dir, s).change)).length + A.filter(a => !T.some(t => t.asis === a.id)).length;
+  return { steps: steps.length, paper: steps.filter(s => s.manual).length, docs: steps.reduce((n, s) => n + (s.docs || []).length, 0), signs: steps.reduce((n, s) => n + (s.signs || []).length, 0), sys: steps.filter(s => s.sys).length, moves, places: places.size, tm, drop, hasSpag: !!(sp && dir === 'import' && (actorKey === 'all' || (travKeys && travKeys.length))) };
 }
 function actorSummaryHtml(view, port, dir, actorKey){
   const a = actorStats('asis', port, dir, actorKey), b = actorStats('tobe', port, dir, actorKey); const name = actorKey === 'all' ? 'all actors' : actorLabel(actorKey);
   const row = (l, x, y) => `<tr><td class="k">${l}</td><td>${x}</td><td>${y}</td></tr>`;
   return `<div class="asum"><div class="asum-head"><b>${esc(name)} at a glance</b> · ${esc(PORTS[port].name)} · ${esc(dir)}</div><table class="asum-table"><thead><tr><th></th><th>Today</th><th>Paperless</th></tr></thead><tbody>
-    ${row('Steps', a.steps, b.steps)}${row('Paper or manual steps', a.paper, b.paper)}${row('Documents handled', a.docs, b.docs)}${row('Signatures and stamps', a.signs, b.signs)}
-    ${a.hasSpag ? row('Moves for one consignment', `${a.moves} between ${a.places} places`, 'see the spaghetti tab') : ''}${row('Steps at High or Medium waits', `${a.waits.High} High, ${a.waits.Medium} Medium`, `${b.drop} where the wait is removed or much shorter`)}
-    ${a.measured ? row('Measured time closed by these steps', esc(fmtDur(a.measured)), 'targets after the pilot') : ''}</tbody></table></div>`;
+    ${row('Steps', a.steps, b.steps)}${row('Paper or manual steps', a.paper, b.paper)}${row('Documents handled', a.docs, b.docs)}${row('Signatures and stamps', a.signs, b.signs)}${row('Steps that create a system record', a.sys, b.sys)}
+    ${a.hasSpag ? row('Moves for one consignment', `${a.moves} between ${a.places} places`, 'see the spaghetti tab') : ''}
+    ${row('Time in these steps (typical)', fmtToday(a.tm), fmtAfter(a.tm) + (a.tm.today && a.tm.after < a.tm.today ? ` <small>about ${esc(fmtH(a.tm.today - a.tm.after))} less</small>` : ''))}${row('Steps where the wait is removed or much shorter', '', a.drop)}</tbody></table>${fmtCond(a.tm)}<p class="asum-note">One month of data, five timestamps per truck: the measured figures are the spans carried by this actor's steps; every other figure is an assumption to be validated.</p></div>`;
 }
 function renderAnalytics(){
   const el = document.getElementById('analytics-panel'); if (!el) return; const A = ANALYTICS; const d = h => fmtDur(h, false); const days = A.daily.map(x => x.d.slice(5).replace('-', '/'));
   const missingIdx = A.daily.map((x, i) => x.arrivals == null ? i : -1).filter(i => i >= 0); const thuIdx = A.dailyTime.map((x, i) => x.wd === 'Thu' ? i : -1).filter(i => i >= 0);
   const dailyInOut = chartLine([{ name: 'trucks in', values: A.daily.map(x => x.arrivals), color: CH.a }, { name: 'trucks out', values: A.daily.map(x => x.exits), color: CH.b }], days, { every: 2, missing: missingIdx, aria: 'Trucks in and out per day' });
   const inside = chartLine([{ name: 'trucks still inside at midnight', values: A.inside.map(x => x.inside), color: CH.amber }], days, { every: 2, missing: missingIdx, legendAlways: true, aria: 'Trucks inside the port at the end of each day' });
-  const dailyStay = chartLine([{ name: 'typical stay of trucks arriving that day', values: A.dailyTime.map(x => x.medianDwell), color: CH.a }], days, { every: 2, missing: missingIdx, marks: thuIdx, markLabel: 'Thursday arrivals', legendAlways: true, fmt: v => d(v), fmtTick: v => Math.round(v) + ' h', ref: A.stay.typical, refLabel: `month typical ${d(A.stay.typical)}`, aria: 'Typical stay by day of arrival' });
-  const smalls = ['post', 'recv', 'exit'].map(k => { const P = TIME.parts[k]; return `<div><h4>${esc(P.label)} <span class="tag t ${levelClass(P.level)}">${P.level}</span></h4>${chartLine([{ name: P.label, values: A.dailyTime.map(x => x[k]), color: lvlColor(P.level) }], days, { every: 4, h: 170, w: 560, missing: missingIdx, fmt: v => d(v), fmtTick: v => Math.round(v) + ' h', ref: P.typical, refLabel: `month typical ${d(P.typical)}`, aria: P.label + ' by day' })}</div>`; }).join('');
+  const dailyStay = chartLine([{ name: 'typical stay of trucks arriving that day', values: A.dailyTime.map(x => x.medianDwell), color: CH.a }], days, { every: 2, missing: missingIdx, marks: thuIdx, markLabel: 'Thursday arrivals', legendAlways: true, fmt: v => d(v), fmtLabel: v => fmtShort(v), fmtTick: v => Math.round(v) + ' h', labelIdx: thuIdx, ref: A.stay.typical, refLabel: `month typical ${d(A.stay.typical)}`, aria: 'Typical stay by day of arrival' });
   const heat = chartHeat(A.heat, ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0')), { fmt: v => v + ' trucks in that hour on an average such day', aria: 'Arrivals by weekday and hour' });
-  const hourStay = chartLine([{ name: 'typical stay by hour of arrival', values: A.hourly.map(h => h.medianDwell), color: CH.a }], A.hourly.map(h => String(h.h).padStart(2, '0') + ':00'), { every: 2, w: 900, h: 200, legendAlways: true, fmt: v => d(v), fmtTick: v => Math.round(v) + ' h', ref: A.stay.typical, refLabel: `month typical ${d(A.stay.typical)}`, aria: 'Typical stay by hour of arrival' });
-  const shedT = tableBars(A.sheds.map(s => ({ label: `Shed ${s.wh}`, trips: s.trips, median: s.median, p75: s.p75, hi: s.median > A.stay.typical * 1.3 })), [{ key: 'label', label: 'Shed' }, { key: 'trips', label: 'Trucks in the month' }, { key: 'median', label: 'Typical stay', bar: true, fmt: v => d(v) }, { key: 'p75', label: 'One truck in four stays longer than', fmt: v => d(v) }], { barKey: 'median' });
-  const distT = tableBars(A.dwellDist.map(x => ({ label: x.label, n: x.n, pct: x.pct })), [{ key: 'label', label: 'Stay in the port' }, { key: 'n', label: 'Trucks', fmt: v => v.toLocaleString() }, { key: 'pct', label: 'Share of trucks', bar: true, fmt: v => v + '%' }], { barKey: 'pct' });
-  const weightT = tableBars(A.weightBands.map(x => ({ label: x.label, n: x.n, median: x.median })), [{ key: 'label', label: 'Cargo weight' }, { key: 'n', label: 'Trucks', fmt: v => v.toLocaleString() }, { key: 'median', label: 'Typical stay', bar: true, fmt: v => d(v) }], { barKey: 'median' });
-  const originT = tableBars(A.origins.map(o => ({ label: o.name, n: o.n, pct: o.pct, median: o.median })), [{ key: 'label', label: 'State on the plate' }, { key: 'n', label: 'Trucks', bar: true, fmt: v => v.toLocaleString() }, { key: 'pct', label: 'Share', fmt: v => v + '%' }, { key: 'median', label: 'Typical stay', fmt: v => v == null ? 'too few to say' : d(v) }], { barKey: 'n' });
-  const weekT = tableBars(A.weekday.filter(w => w.medianDwell != null).map(w => ({ label: w.wd, arrivals: w.arrivals, exits: w.exits, median: w.medianDwell, hi: w.medianDwell > A.stay.typical * 1.3 })), [{ key: 'label', label: 'Day of arrival' }, { key: 'arrivals', label: 'Arrivals a day' }, { key: 'exits', label: 'Exits a day' }, { key: 'median', label: 'Typical stay', bar: true, fmt: v => d(v) }], { barKey: 'median' });
-  const completeT = tableBars(A.completeness.map(x => ({ label: x.label, n: x.n, pct: x.pct, hi: x.pct < 90 })), [{ key: 'label', label: 'Recorded moment' }, { key: 'n', label: 'Trips with it', fmt: v => v.toLocaleString() }, { key: 'pct', label: 'Completeness', bar: true, fmt: v => v + '%' }], { barKey: 'pct' });
+  const hourStay = chartLine([{ name: 'typical stay by hour of arrival', values: A.hourly.map(h => h.medianDwell), color: CH.a }], A.hourly.map(h => String(h.h).padStart(2, '0') + ':00'), { every: 2, w: 900, h: 220, legendAlways: true, fmt: v => d(v), fmtLabel: v => fmtShort(v), fmtTick: v => Math.round(v) + ' h', labels: 'all', ref: A.stay.typical, refLabel: `month typical ${d(A.stay.typical)}`, aria: 'Typical stay by hour of arrival' });
+  const shedT = tableBars(A.sheds.map(s => ({ label: `Shed ${s.wh}`, trips: s.trips, median: s.median, p75: s.p75, hi: s.median > A.stay.typical * 1.3 })), [{ key: 'label', label: 'Shed' }, { key: 'trips', label: 'Trucks in the month' }, { key: 'median', label: 'Typical stay', bar: true, fmt: v => d(v) }, { key: 'p75', label: 'One truck in four stays longer than', fmt: v => d(v) }], { barKey: 'median', name: 'BLPA_analytics_sheds' });
+  const distT = tableBars(A.dwellDist.map(x => ({ label: x.label, n: x.n, pct: x.pct })), [{ key: 'label', label: 'Stay in the port' }, { key: 'n', label: 'Trucks', fmt: v => v.toLocaleString() }, { key: 'pct', label: 'Share of trucks', bar: true, fmt: v => v + '%' }], { barKey: 'pct', name: 'BLPA_analytics_length_of_stay' });
+  const weekT = tableBars(A.weekday.filter(w => w.medianDwell != null).map(w => ({ label: w.wd, arrivals: w.arrivals, exits: w.exits, median: w.medianDwell, hi: w.medianDwell > A.stay.typical * 1.3 })), [{ key: 'label', label: 'Day of arrival' }, { key: 'arrivals', label: 'Arrivals a day' }, { key: 'exits', label: 'Exits a day' }, { key: 'median', label: 'Typical stay', bar: true, fmt: v => d(v) }], { barKey: 'median', name: 'BLPA_analytics_weekday' });
+  const completeT = tableBars(A.completeness.map(x => ({ label: x.label, n: x.n, pct: x.pct, hi: x.pct < 90 })), [{ key: 'label', label: 'Recorded moment' }, { key: 'n', label: 'Trips with it', fmt: v => v.toLocaleString() }, { key: 'pct', label: 'Completeness', bar: true, fmt: v => v + '%' }], { barKey: 'pct', name: 'BLPA_analytics_completeness' });
   const actorsA = ACTORS.filter(a => a.key !== 'sys' && resolveSteps('asis', 'import', 'ben').some(s => s.actor === a.key));
-  const actorRows = actorsA.map(a => { const x = actorStats('asis', 'ben', 'import', a.key), y = actorStats('tobe', 'ben', 'import', a.key); return `<tr><td class="k">${esc(a.label)}</td><td>${x.steps} → ${y.steps}</td><td>${x.paper} → ${y.paper}</td><td>${x.docs} → ${y.docs}</td><td>${x.signs} → ${y.signs}</td><td>${x.hasSpag ? x.moves : 'n/a'}</td><td>${x.waits.High} High, ${x.waits.Medium} Medium</td><td>${y.drop}</td></tr>`; });
+  const actorRows = actorsA.map(a => { const x = actorStats('asis', 'ben', 'import', a.key), y = actorStats('tobe', 'ben', 'import', a.key); return `<tr><td class="k">${esc(a.label)}</td><td>${x.steps} to ${y.steps}</td><td>${x.paper} to ${y.paper}</td><td>${x.docs} to ${y.docs}</td><td>${x.signs} to ${y.signs}</td><td>${x.hasSpag ? x.moves : 'n/a'}</td><td>${fmtToday(x.tm)}${fmtCond(x.tm)}</td><td>${fmtAfter(x.tm)}</td><td>${x.drop}</td></tr>`; });
   const insights = A.insights.map(i => `<div class="ins"><b>${esc(i.title)}</b><p>${esc(i.text)}</p></div>`).join('');
   const L = id => `<a class="steplink" href="#" onclick="event.preventDefault();openBen('${id}')">`;
   el.innerHTML = `<div class="card" style="margin-top:8px"><h2>One month at Benapole: what the port's own records say</h2>
-    <p class="body"><b>${esc(A.meta.frm)} to ${esc(A.meta.to)}</b>: ${A.meta.trips.toLocaleString()} Indian truck trips on ${A.meta.manifests.toLocaleString()} manifests, ${A.meta.tonnes.toLocaleString()} tonnes of cargo, from the port's truck tracking report. For each truck ISLAS records five moments: ${L('2.2')}gate in</a>, ${L('3.2')}weighing</a>, ${L('4.3')}posting record</a>, ${L('5.2')}warehouse receipt</a> and ${L('7.2')}gate out</a>. Everything on this page is the time between those moments, laid onto the process map. The records do not hold the commodity, the local truck or the Customs file, so the shed and the cargo weight stand in for the kind of cargo.</p>
-    <div class="kpi-grid">${tile(A.meta.trips.toLocaleString(), 'truck trips in the month')}${tile(esc(d(A.stay.typical)), 'typical stay, gate in to gate out')}${tile(esc(d(A.stay.slow)), 'one truck in ten stays longer than this', 'hot')}${tile(A.stay.over24 + '%', 'of trucks stay more than a day', 'hot')}${tile(A.meta.covered + ' of ' + A.meta.days, 'days with a report')}${tile(A.meta.donePct + '%', 'of trips have a recorded exit')}</div></div>
-    <div class="card"><h2>The process map with the month's time on it</h2><p class="body">The same journey as the AS-IS map, drawn to scale for three kinds of truck. The length of each segment is the time between two recorded moments; the moments are steps of the map and can be clicked.</p>${journeyRuler()}${MONTH_CAP()}
-      <h3>Phase by phase</h3><p class="body">Which phases of the map the data can time, and which it cannot.</p><div id="an-phases">${phaseTimeTable()}</div></div>
+    <p class="body"><b>${esc(A.meta.frm)} to ${esc(A.meta.to)}</b>: ${A.meta.trips.toLocaleString()} Indian truck trips on ${A.meta.manifests.toLocaleString()} manifests, ${A.meta.tonnes.toLocaleString()} tonnes of cargo, from the port's truck tracking report. For each truck ISLAS records five moments: ${L('2.2')}gate in</a>, ${L('3.2')}weighing</a>, ${L('4.3')}posting record</a>, ${L('5.2')}warehouse receipt</a> and ${L('7.2')}gate out</a>. Everything measured on this page is the time between those moments, laid onto the process map; everything else is an assumption and says so. The records do not hold the commodity, the local truck or the Customs file, so the shed stands in for the kind of cargo.</p>
+    <div class="kpi-grid">${tile(A.meta.trips.toLocaleString(), 'truck trips in the month')}${tile(esc(d(A.stay.typical)), 'typical stay, gate in to gate out')}${tile(esc(d(A.stay.slow)), 'one truck in ten stays longer than this', 'hot')}${tile(A.stay.over24 + '%', 'of trucks stay more than a day', 'hot')}${tile(A.meta.covered + ' of ' + A.meta.days, 'days with a report')}${tile(A.meta.donePct + '%', 'of trips have a recorded exit')}</div>${TIME_CAVEAT()}</div>
+    <div class="card"><h2>The process map with the month's time on it</h2><p class="body">The same journey as the AS-IS map, drawn to scale for three kinds of truck. Each segment is the time between two recorded moments; the moments are steps of the map and can be clicked.</p>${journeyRuler()}${MONTH_CAP()}
+      <h3>Phase by phase: the time each phase carries</h3><p class="body">Coloured bars are measured, on the step of the map where the time is spent. Grey bars are assumptions for the steps the data cannot see. All bars are to the same scale.</p>${phaseChart()}<div id="an-phases">${phaseTimeTable()}</div></div>
+    <div class="card"><h2>What the paperless process changes, phase by phase</h2><p class="body">Today's figure against the assumed figure after paperless, from the same numbers as the re-engineering table. Measured spans are taken at today's quickest quarter of trucks; assumed steps follow the fixed rule; unloading stays as today because it is physical work. These are targets to validate in the pilot, not forecasts.</p>${savingChart()}</div>
     <div class="card"><h2>What stands out</h2><div class="ins-grid">${insights}</div></div>
-    <div class="card"><h2>The month, day by day</h2><p class="body">Every chart below runs over the same calendar, ${esc(A.meta.frm)} to ${esc(A.meta.to)}. Pink days have no report (mostly Fridays); their arrivals are unknown.</p>
+    <div class="card"><h2>The month, day by day</h2><p class="body">Every chart below runs over the same calendar, ${esc(A.meta.frm)} to ${esc(A.meta.to)}. Pink days have no report (mostly Fridays). The highest and lowest points are labelled.</p>
       <h3>Trucks in and out each day</h3>${dailyInOut}${MONTH_CAP()}
-      <h3>Trucks still inside the port at the end of each day</h3><p class="body">Counted from trips with a recorded exit only, so this is the floor of the real number. The port carries a backlog of several hundred trucks overnight throughout the month.</p>${inside}${MONTH_CAP()}
-      <h3>How long the trucks that arrived each day stayed</h3><p class="body">The typical stay of the trucks that entered on that day; Thursday arrivals stand out because the following day has no port activity.</p>${dailyStay}${MONTH_CAP()}
-      <h3>The three waiting parts, day by day</h3><p class="body">Typical time of each part for the trucks that arrived that day, against the month's typical value (dashed). A day where the line jumps is a day the port was congested at that point of the process.</p><div class="three">${smalls}</div>${MONTH_CAP()}</div>
-    <div class="card"><h2>When trucks arrive, and what it costs them</h2><div class="two"><div><h3>Arrivals by weekday and hour</h3><p class="body">Average trucks entering per hour on each weekday over the month. The darker the cell, the busier the hour; pink means no reporting day.</p>${heat}</div><div><h3>Typical stay by hour of arrival</h3><p class="body">Trucks that enter in the afternoon and evening stay about a day; the few that enter early in the morning are out the same day.</p>${hourStay}</div></div>
+      <h3>Trucks still inside the port at the end of each day</h3><p class="body">Counted from trips with a recorded exit only, so this is the floor of the real number. The port carries a backlog of several hundred trucks overnight throughout the month; that backlog is the queue the posting and unloading waits are made of.</p>${inside}${MONTH_CAP()}
+      <h3>How long the trucks that arrived each day stayed</h3><p class="body">The typical stay of the trucks that entered on that day, with Thursday arrivals labelled: the following day has no port activity, so they wait it out.</p>${dailyStay}${MONTH_CAP()}</div>
+    <div class="card"><h2>When trucks arrive, and what it costs them</h2><div class="two"><div><h3>Arrivals by weekday and hour</h3><p class="body">Average trucks entering per hour on each weekday over the month. The darker the cell, the busier the hour; pink means no reporting day. Arrivals bunch between 13:00 and 20:00, when the sheds are already full.</p>${heat}</div><div><h3>Typical stay by hour of arrival</h3><p class="body">Every point is labelled. Trucks that enter in the afternoon and evening stay about a day; the few that enter in the morning are out the same day.</p>${hourStay}</div></div>
       <h3>By weekday of arrival</h3>${weekT}${MONTH_CAP()}</div>
-    <div class="card"><h2>How long trucks stay, and where</h2><div class="two"><div><h3>Length of stay</h3>${distT}</div><div><h3>By shed</h3><p class="body">Sheds with at least 100 completed trips, quickest first. The shed is the closest thing in the data to the kind of cargo; red rows are well above the month's typical stay.</p>${shedT}</div></div>
-      <div class="two"><div><h3>By cargo weight</h3><p class="body">Heavier loads stay only a little longer: the time is waiting, not handling.</p>${weightT}</div><div><h3>Where the trucks come from</h3><p class="body">By the state on the registration plate; ${A.originsOther.toLocaleString()} trucks are from other states or could not be read.</p>${originT}</div></div>${MONTH_CAP()}</div>
-    <div class="card"><h2>The process by actor</h2><p class="body">From the process map for Benapole import: how much of the work each actor carries today and after the paperless process. Moves on foot come from the spaghetti diagram and exist for the C&F agent and the drivers only.</p>${table(['Actor', 'Steps: today → paperless', 'Paper steps', 'Documents handled', 'Signatures', 'Moves for one consignment', 'Steps at waits today', 'Waits removed or much shorter'], actorRows, 900)}</div>
+    <div class="card"><h2>How long trucks stay, and where</h2><div class="two"><div><h3>Length of stay</h3>${distT}</div><div><h3>By shed</h3><p class="body">Sheds with at least 100 completed trips, quickest first. The shed is the closest thing in the data to the kind of cargo; red rows are well above the month's typical stay. Cargo weight barely matters: trucks over 30 t stay ${esc(d(A.weightBands[A.weightBands.length - 1].median))} against ${esc(d(A.weightBands[0].median))} for trucks under 10 t.</p>${shedT}</div></div>${MONTH_CAP()}</div>
+    <div class="card"><h2>The process by actor</h2><p class="body">From the process map for Benapole import: how much of the work each actor carries today and after the paperless process, with the time carried by that actor's steps. Moves on foot come from the spaghetti diagram and exist for the C&F agent and the drivers only.</p>${xtable(['Actor', 'Steps: today to paperless', 'Paper steps', 'Documents handled', 'Signatures', 'Moves for one consignment', 'Time in these steps today', 'After paperless', 'Steps where the wait is removed or much shorter'], actorRows, 1000, 'BLPA_analytics_by_actor')}${TIME_CAVEAT()}</div>
     <div class="card"><h2>How good the data is</h2><div class="two"><div><h3>Completeness of each recorded moment</h3>${completeT}</div><div><h3>Notes</h3><ul class="notes"><li>${A.meta.missing.length} dates in the window have no report (${esc(A.meta.missing.map(x => x.slice(5).replace('-', '/')).join(', '))}); most are Fridays.</li><li>Two weighbridges shared the month: scale 1 took ${A.scales[0].trips.toLocaleString()} trucks and scale 2 ${A.scales[1].trips.toLocaleString()}; gate to weighing takes about ${A.scales[0].medianMin} and ${A.scales[1].medianMin} minutes respectively.</li><li>Customs assessment was still open on ${A.flags[0].pct}% of trips and duty unpaid on ${A.flags[1].pct}% when the report was pulled; those trucks had left less often (${A.flags[0].exitRate}% and ${A.flags[1].exitRate}% against ${A.flags[0].exitRateYes}% and ${A.flags[1].exitRateYes}%).</li><li>Weighed net weight exceeds the declared weight on ${A.declared.overPct}% of trips, typically by ${A.declared.medianKg} kg.</li><li>Trips longer than 40 days were treated as data errors and left out of the time figures.</li></ul></div></div></div>`;
   linkSteps(document.getElementById('an-phases'), 'asis', 'ben', 'import');
 }
 /* ===================== stakeholder feedback: comments on steps, phases and tabs; append-only ===================== */
 const FB_KEY = 'blpa-map-feedback-v1';
 state.fb = { list: [], me: null, filter: 'all' };
-function fbLoad(){ try { const raw = localStorage.getItem(FB_KEY); const d = raw ? JSON.parse(raw) : {}; state.fb.list = Array.isArray(d.list) ? d.list : []; state.fb.me = d.me || null; } catch (e) { state.fb.list = []; state.fb.me = null; } if (window.BLPA_FEEDBACK_SEED && Array.isArray(window.BLPA_FEEDBACK_SEED)) fbMerge(window.BLPA_FEEDBACK_SEED, false); }
-function fbSave(){ try { localStorage.setItem(FB_KEY, JSON.stringify({ list: state.fb.list, me: state.fb.me })); } catch (e) {} fbBadge(); }
+/* comments are kept in two places in this browser (localStorage and IndexedDB) and never deleted by the page; each load merges both copies */
+function fbDb(cb){ try { const rq = indexedDB.open('blpa-map', 1); rq.onupgradeneeded = () => rq.result.createObjectStore('kv'); rq.onsuccess = () => cb(rq.result); rq.onerror = () => cb(null); } catch (e) { cb(null); } }
+function fbDbRead(cb){ fbDb(db => { if (!db) return cb(null); try { const tx = db.transaction('kv', 'readonly'); const g = tx.objectStore('kv').get(FB_KEY); g.onsuccess = () => cb(g.result || null); g.onerror = () => cb(null); } catch (e) { cb(null); } }); }
+function fbDbWrite(payload){ fbDb(db => { if (!db) return; try { db.transaction('kv', 'readwrite').objectStore('kv').put(payload, FB_KEY); } catch (e) {} }); }
+state.fb.saved = null; state.fb.store = 'none';
+function fbLoad(){
+  try { const raw = localStorage.getItem(FB_KEY); const d = raw ? JSON.parse(raw) : {}; state.fb.list = Array.isArray(d.list) ? d.list : []; state.fb.me = d.me || null; state.fb.saved = d.saved || null; state.fb.store = raw ? 'localStorage' : 'none'; } catch (e) { state.fb.list = []; state.fb.me = null; }
+  if (window.BLPA_FEEDBACK_SEED && Array.isArray(window.BLPA_FEEDBACK_SEED)) fbMerge(window.BLPA_FEEDBACK_SEED, false);
+  fbDbRead(d => { if (!d) return; const n = fbMerge(Array.isArray(d.list) ? d.list : [], false); if (!state.fb.me && d.me) state.fb.me = d.me; if (n) { state.fb.store = 'recovered from the second copy'; fbSave(); fbRefresh(); } else if (state.fb.store === 'none' && state.fb.list.length) { state.fb.store = 'IndexedDB'; fbBadge(); renderFeedback(); } });
+}
+function fbSave(){ state.fb.saved = new Date().toISOString(); const payload = { list: state.fb.list, me: state.fb.me, saved: state.fb.saved }; try { localStorage.setItem(FB_KEY, JSON.stringify(payload)); state.fb.store = 'localStorage'; } catch (e) {} fbDbWrite(payload); fbBadge(); }
+function fbCsv(){ const rows = [['Id','Time','Name','Organisation','Target type','View','Port','Direction','Step or phase','Target label','Comment','Edited']]; state.fb.list.forEach(c => rows.push([c.id, (c.time||'').replace('T',' ').slice(0,16), c.name||'', c.org||'', c.target.type, c.target.view||'', c.target.port ? (PORTS[c.target.port]?.name||c.target.port) : '', c.target.dir||'', c.target.id||'', c.target.label||'', c.text, c.edited ? (c.edited.replace('T',' ').slice(0,16)) : ''])); csvDownload(`BLPA_map_feedback_${new Date().toISOString().slice(0,10)}.csv`, rows); }
+function fbStatus(){ const n = state.fb.list.length; const when = state.fb.saved ? state.fb.saved.replace('T',' ').slice(0,16) : ''; return `<div class="fb-status"><b>${n} comment${n===1?'':'s'}</b> kept in this browser for this page${when ? `; last saved ${esc(when)}` : ''}. Comments live in the browser that wrote them: another browser, another computer, a private window, or clearing the browser's site data will not show them. Download the comments file after each session and send it back; every file is merged into the next version of the map, so nothing sent is lost.</div>`; }
 function fbBadge(){ const b = document.getElementById('fb-count'); if (b) b.textContent = state.fb.list.length ? String(state.fb.list.length) : ''; }
 function fbId(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function fbMe(){ if (!state.fb.me) { state.fb.me = { id: fbId(), name: '', org: '' }; } return state.fb.me; }
@@ -2465,9 +2891,9 @@ function renderFeedback(){
   const tabTarget = id => ({ type: 'tab', id, label: `Tab: ${id}` });
   const items = Object.entries(groups).map(([k, cs]) => `<h3>${esc(k)} <small>${cs.length}</small></h3>${cs.map(c => `<div class="fb-item wide"><div class="fb-meta"><button type="button" class="rt-link" onclick='fbGo(${esc(JSON.stringify(c))})'>${esc(c.target.label || c.target.id)}</button> · <b>${esc(c.name || 'Anonymous')}</b>${c.org ? ' · ' + esc(c.org) : ''} · ${esc((c.time || '').replace('T', ' ').slice(0, 16))}${c.edited ? ' · edited' : ''}${me && c.author === me.id ? ` · <button type="button" class="rt-link" onclick="fbEdit('${esc(c.id)}')">edit</button>` : ''}</div><div class="fb-text">${esc(c.text)}</div></div>`).join('')}`).join('');
   el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Feedback from stakeholders</h2>
-    <p class="body">Every step card, every phase and this page carry a <b>Comment</b> button. Comments are kept with the map; nothing can be deleted, and you can edit your own. When you have finished, press <b>Download my comments</b> and send the file back; all files are merged into one list here.</p>
+    <p class="body">Every step card, every phase and this page carry a <b>Comment</b> button. Comments are kept in this browser; nothing can be deleted, and you can edit your own. When you have finished, press <b>Download my comments</b> and send the file back; all files are merged into one list in the next version of the map.</p>${fbStatus()}
     <div class="toolbar"><div class="grp"><b>You</b><span>${me.name ? esc(me.name) + (me.org ? ' · ' + esc(me.org) : '') : '<i>name not set yet; it is asked when you post</i>'}</span></div>
-      <div class="grp"><button type="button" class="rt-btn primary" onclick='fbOpen(${esc(JSON.stringify({ type: 'tab', id: 'overview', label: 'General comment on the process map' }))})'>General comment</button><button type="button" class="rt-btn" onclick="fbExport()">Download my comments</button><label class="rt-btn" for="fb-file">Import a comments file</label><input id="fb-file" type="file" accept="application/json,.json" style="display:none" onchange="fbImport(this)"></div></div>
+      <div class="grp"><button type="button" class="rt-btn primary" onclick='fbOpen(${esc(JSON.stringify({ type: 'tab', id: 'overview', label: 'General comment on the process map' }))})'>General comment</button><button type="button" class="rt-btn" onclick="fbExport()">Download my comments (file to send back)</button><button type="button" class="rt-btn" onclick="fbCsv()">Download as CSV</button><label class="rt-btn" for="fb-file">Import a comments file</label><input id="fb-file" type="file" accept="application/json,.json" style="display:none" onchange="fbImport(this)"></div></div>
     <div class="quant-strip"><span class="q-chip">comments: <b>${state.fb.list.length}</b></span><span class="q-chip">on steps: <b>${state.fb.list.filter(c => c.target.type === 'step').length}</b></span><span class="q-chip">on phases: <b>${state.fb.list.filter(c => c.target.type === 'phase').length}</b></span><span class="q-chip">general: <b>${state.fb.list.filter(c => c.target.type === 'tab').length}</b></span><span class="q-chip">people: <b>${new Set(state.fb.list.map(c => (c.name || '') + '|' + (c.org || ''))).size}</b></span></div>
     ${items || '<p class="body muted">No comments yet. Open a step in the AS-IS or TO-BE flow and press Comment.</p>'}</div>`;
   fbBadge();
