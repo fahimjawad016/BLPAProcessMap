@@ -394,6 +394,9 @@
     tr.hit td { background:#fff4d8 !important; transition:background .4s; }
     .drawer .change.pair { background:#eef8f1; border-color:#bfe0cb; } .drawer .change.pair b { color:#0f5132; }
     .tv-total { margin:2px 0 16px; }
+    .mv { display:inline-flex; align-items:center; border-radius:4px; padding:1px 5px; font-size:9px; font-weight:800; background:#eef1ef; color:#41504a; margin:1px 2px 0 0; } .mv.tr { background:#e2efda; color:#1f5f3a; } .mv.ft { background:#f1eafe; color:#5b21b6; } .mv.pp { background:#fde8e8; color:#8b1d1d; } .nc .nf span.mv { font-size:9px; }
+    .movelist table { min-width:0; width:100%; } .movelist td { font-size:11.5px; }
+    .tv-table tr.gone td { opacity:.6; }
     .tblx-bar { display:flex; justify-content:flex-end; margin:2px 0 0; }
     .csv-link { border:none; background:none; color:#1d4ed8; font-size:11px; font-weight:700; cursor:pointer; padding:2px 4px; }
     .csv-link:hover { text-decoration:underline; }
@@ -574,11 +577,51 @@ function xtable(headers, rows, minw, name){ return `<div class="tblx"><div class
 function xwrap(html, name){ return `<div class="tblx"><div class="tblx-bar"><button type="button" class="csv-link" onclick="tableCsv(this,'${esc(name)}.csv')">Download this table (CSV)</button></div>${html}</div>`; }
 
 const CLIENT_MODE = true;   // hides the internal validation questions and counters from the shared page
-const state = { tab:'overview', port:'ben', dir:'import', mode:'phase', actor:'all', doc:'', scale:{asis:1, tobe:1}, spagPort:'ben', trav:'all', reviewer:false, activeStep:null };
+const state = { tab:'overview', port:'ben', dir:'import', mode:'phase', actor:'all', lens:'all', route:'all', doc:'', scale:{asis:1, tobe:1}, spagPort:'ben', trav:'all', reviewer:false, activeStep:null };
 
 /* ===================== model access ===================== */
 function actorByKey(k){ return ACTORS.find(a=>a.key===k); }
-function actorLabel(k){ return actorByKey(k)?.label || k; }
+function actorLabel(k){ return actorByKey(k)?.label || LENS[k]?.label || k; }
+/* ===================== actor groups (the three lenses the client asked for, plus the outside parties) ===================== */
+const LENS = {
+  port:     { key:'port',     label:'Port (BLPA)',          sub:'entry gate, weighbridge, posting, yard, warehouse, billing, exit gate', actors:['gate','wb','post','yard','wh','rev','exit'], group:'blpa' },
+  users:    { key:'users',    label:'Port users',           sub:'C&F agent and border man, importer or exporter', actors:['cf','com'], group:'ext' },
+  trucks:   { key:'trucks',   label:'Trucks and drivers',   sub:'Indian truck, Bangladeshi truck, their drivers', actors:['drv'], group:'ext' },
+  agencies: { key:'agencies', label:'Customs and agencies', sub:'Customs (NBR), other government agencies, BGB', actors:['cus','oga','bgb'], group:'ext' },
+  bank:     { key:'bank',     label:'Bank',                 sub:'Sonali Bank and the port bank counters', actors:['bank'], group:'ext' },
+  india:    { key:'india',    label:'Indian side',          sub:'Indian exporter, Indian C&F agent, Indian Customs', actors:['ind'], group:'ext' },
+};
+const LENS_ORDER = ['port','users','trucks','agencies','bank','india'];
+const LENS_MAIN = ['port','users','trucks'];
+function lensOf(a){ return a === 'sys' ? 'sys' : (LENS_ORDER.find(k => LENS[k].actors.includes(a)) || ''); }
+function lensActors(k){ return LENS[k] ? LENS[k].actors : []; }
+function lensLanes(){ return LENS_ORDER.map(k => LENS[k]).concat([actorByKey('sys')]); }
+/* the set of actor keys in focus, or null for everything: a single actor beats a group */
+function focusSet(){ if (state.actor !== 'all' && actorByKey(state.actor)) return new Set([state.actor]); if (state.lens !== 'all') return new Set(lensActors(state.lens)); return null; }
+function focusLabel(){ if (state.actor !== 'all' && actorByKey(state.actor)) return actorLabel(state.actor); if (state.lens !== 'all') return LENS[state.lens].label; return ''; }
+function inFocus(a){ const f = focusSet(); return !f || f.has(a); }
+/* ===================== routes inside the import flow ===================== */
+const ROUTES = { all:'All routes', wh:'Warehouse route', ts:'Transshipment route', stone:'Stone and bulk route' };
+const ROUTE_ONLY = { wh:['4.2','4.3','4.4','4.5','5.1','5.2','5.3','5.5','5.6','9.1','9.2','9.3'], ts:['6.1','6.2','6.3','6.4','6.5'], stone:['4.6'] };
+const TOBE_ROUTE_NEW = { '4.5':'wh' };
+function routeOf(view, dir, s){ if (dir !== 'import') return 'all'; const id = view === 'asis' ? s.id : s.asis; let r = Object.keys(ROUTE_ONLY).find(k => id && ROUTE_ONLY[k].includes(id)); if (!r && view === 'tobe') r = TOBE_ROUTE_NEW[s.id]; return r || 'all'; }
+function inRoute(view, dir, s, route){ route = route || state.route; if (route === 'all') return true; const r = routeOf(view, dir, s); return r === 'all' || r === route; }
+function viewSteps(view, dir, port, route){ return resolveSteps(view, dir, port).filter(s => inRoute(view, dir, s, route)); }
+function routeLabel(){ return state.route === 'all' ? '' : ROUTES[state.route]; }
+/* ===================== movements: derived from the spaghetti, one index per port and direction ===================== */
+const TRAV_LENS = { itruck:'trucks', ltruck:'trucks', xtruck:'trucks', driver:'trucks', cf:'users', file:'paper' };
+const TRAV_KIND = { itruck:'truck', ltruck:'truck', xtruck:'truck', driver:'on foot', cf:'on foot', file:'paper' };
+function spagFor(port, dir){ return dir === 'import' ? SPAG[port] : (typeof SPAGX !== 'undefined' ? SPAGX[port] : null); }
+const _mvIdx = {};
+function moveIndex(port, dir){ const k = port + '|' + dir; if (_mvIdx[k]) return _mvIdx[k]; const sp = spagFor(port, dir); const by = {}; if (sp) sp.travellers.forEach(t => t.moves.forEach((m, i) => { (by[m.step] = by[m.step] || []).push({ t: t.key, kind: TRAV_KIND[t.key] || 'on foot', lens: TRAV_LENS[t.key] || '', n: i + 1, m }); })); return (_mvIdx[k] = by); }
+function stepMoves(port, dir, id){ return moveIndex(port, dir)[id] || []; }
+/* does a move still happen after paperless? trucks move unless the step disappears; a person or a paper still goes only if the paperless step is still a paper step */
+function moveStays(port, dir, m, tkey){ const succ = resolveSteps('tobe', dir, port).filter(t => t.asis === m.step); if (!succ.length) return false; if (TRAV_KIND[tkey] === 'truck') return true; return succ.some(t => t.manual); }
+/* movement totals for a set of AS-IS steps: physical moves (truck, on foot) and paper moves, today and after */
+function moveTotals(port, dir, steps, lens){ const idx = moveIndex(port, dir); const r = { moves:0, paper:0, after:0, paperAfter:0, stepsWithMove:0, truck:0, foot:0 }; steps.forEach(s => { const list = (idx[s.id] || []).filter(x => !lens || lens === 'all' || x.lens === lens || (lens === 'paper' && x.lens === 'paper')); if (list.some(x => x.kind !== 'paper')) r.stepsWithMove++; list.forEach(x => { const stays = moveStays(port, dir, x.m, x.t); if (x.kind === 'paper') { r.paper++; if (stays) r.paperAfter++; } else { r.moves++; if (x.kind === 'truck') r.truck++; else r.foot++; if (stays) r.after++; } }); }); return r; }
+/* arrivals at the port's own places (gate, scale, posting, sheds, billing, exit) for one consignment, today and after paperless */
+function portArrivals(port, dir, ids){ const sp = spagFor(port, dir); const r = { today:0, after:0 }; if (!sp) return r; const blpa = new Set(sp.nodes.filter(n => n.type === 'blpa').map(n => n.id)); sp.travellers.forEach(t => t.moves.forEach(m => { if (!blpa.has(m.to)) return; if (ids && !ids.has(m.step)) return; r.today++; if (moveStays(port, dir, m, t.key)) r.after++; })); return r; }
+function moveChip(port, dir, s){ const kinds = [...new Set(stepMoves(port, dir, s.id).map(x => x.kind))]; if (!kinds.length) return ''; return kinds.map(k => `<span class="mv ${k === 'truck' ? 'tr' : k === 'paper' ? 'pp' : 'ft'}">${k === 'truck' ? 'truck moves' : k === 'paper' ? 'paper moves' : 'on foot'}</span>`).join(''); }
 function phaseList(dir){ return PHASES[dir]; }
 function resolveSteps(view, dir, port){
   const src = FLOWS[view][dir];
@@ -609,7 +652,8 @@ function neededSysHeight(s, S){
   const cpl = Math.floor((S.nodeW - 22) / 6.0);
   return 40 + Math.ceil(compact(s.sys.record||'').length / cpl) * 15 + Math.ceil((s.sys.module||'').length / cpl) * 14;
 }
-function computeLayout(steps, phases, selectedActor, S){
+function computeLayout(steps, phases, focus, S, laneDefs){
+  laneDefs = laneDefs || ACTORS;
   let slot = -1; const pos = {}; const decPos = {};
   const phaseSlots = {}; phases.forEach(p => phaseSlots[p.key] = {start:null, end:null});
   let slotLanes = new Set(); let slotCount = 0; let prevPhase = null; let prevHadDecision = true;
@@ -625,12 +669,12 @@ function computeLayout(steps, phases, selectedActor, S){
   phases.forEach(p => { const ps = phaseSlots[p.key]; if (ps.start === null) { ps.start = slot; ps.end = slot; slot++; } });
   const used = new Set(steps.map(s=>s.actor));
   const hasSys = steps.some(s=>s.sys);
-  const lanes = ACTORS.filter(a => used.has(a.key) || (a.key==='sys' && hasSys));
+  const lanes = laneDefs.filter(a => used.has(a.key) || (a.key==='sys' && hasSys));
   const need = {}; const nodeH = {};
   steps.forEach(s => { const h = neededHeight(s, S); nodeH[s.id] = h; need[s.actor] = Math.max(need[s.actor]||0, h); if (s.sys) { const hs = neededSysHeight(s, S); nodeH['S:'+s.id] = hs; need.sys = Math.max(need.sys||0, hs); } });
   let y = S.topPad + S.phaseH; const laneY = {}; const laneHeight = {};
   lanes.forEach(a => {
-    const collapsed = selectedActor !== 'all' && a.key !== selectedActor && a.key !== 'sys';
+    const collapsed = !!focus && !focus.has(a.key) && a.key !== 'sys';
     laneHeight[a.key] = collapsed ? S.laneHCollapsed : (a.key==='sys' ? Math.max(S.sysH, need.sys||0) + 20 : Math.max(S.laneH, (need[a.key]||0) + 20));
     laneY[a.key] = y; y += laneHeight[a.key];
   });
@@ -693,8 +737,8 @@ function nodeFlags(s, view){
   const tc = timeChip(s); if (tc) f.push(tc);
   return f.join('');
 }
-function renderSvg(view, steps, phases, sel, S, key){
-  const lay = computeLayout(steps, phases, sel, S);
+function renderSvg(view, steps, phases, focus, S, key, laneDefs){
+  const lay = computeLayout(steps, phases, focus, S, laneDefs);
   const edges = edgesFor(steps); const B = lay.boxes;
   let svg = ''; let heads = '';
   if (S.phaseH) lay.phases.forEach((p, i) => {
@@ -703,7 +747,7 @@ function renderSvg(view, steps, phases, sel, S, key){
     svg += `<rect class="phase-head" x="${x0}" y="${S.topPad}" width="${x1-x0}" height="${S.phaseH-4}" rx="7"/><foreignObject x="${x0}" y="${S.topPad}" width="${x1-x0}" height="${S.phaseH-4}"><div xmlns="http://www.w3.org/1999/xhtml" class="ph"><b>${p.n} · ${esc(p.label)}</b><i>${esc(p.sub||'')}</i></div></foreignObject>`;
   });
   lay.lanes.forEach(a => {
-    const y = lay.laneY[a.key], h = lay.laneHeight[a.key]; const collapsed = h === S.laneHCollapsed; const selected = sel === a.key;
+    const y = lay.laneY[a.key], h = lay.laneHeight[a.key]; const collapsed = h === S.laneHCollapsed; const selected = !!focus && focus.has(a.key) && focus.size <= (LENS[a.key] ? 1 : 1);
     svg += `<rect class="lane-band grp-${a.group} ${collapsed?'collapsed':''}" x="${S.laneHeadW}" y="${y}" width="${lay.totalW-S.laneHeadW}" height="${h}"/>`;
     { const hh = `<rect class="lane-head grp-${a.group} ${selected?'selected':''}" x="0" y="${y}" width="${S.laneHeadW}" height="${h}" style="cursor:pointer" onclick="selectActor('${a.key}')"/><foreignObject x="0" y="${y}" width="${S.laneHeadW}" height="${h}" style="pointer-events:none"><div xmlns="http://www.w3.org/1999/xhtml" class="lh ${selected?'sel':''}"><b>${esc(view==='tobe' && a.key==='sys' ? 'IBMS modules' : a.label)}</b>${collapsed?'':`<i>${esc(view==='tobe' && a.key==='sys' ? 'and the external systems it connects to' : a.sub||'')}</i>`}</div></foreignObject>`; svg += hh; heads += hh; }
   });
@@ -716,7 +760,7 @@ function renderSvg(view, steps, phases, sel, S, key){
     if (b.collapsed) out += `<circle class="stub" data-id="${esc(s.id)}" cx="${b.x+9}" cy="${b.y+9}" r="8" onclick="openStep('${view}','${esc(s.id)}')"><title>${esc(s.id+' · '+s.title)}</title></circle>`;
     else {
       const cls = ['node', s.manual?'manual':'', (view==='tobe'&&s.change)?'changed':''].join(' ');
-      out += `<g data-id="${esc(s.id)}" class="stepnode" onmouseenter="hoverStep('${esc(s.id)}')" onmouseleave="hoverStep(null)" onclick="openStep('${view}','${esc(s.id)}')"><rect class="${cls}" x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" rx="10"/><foreignObject x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" style="pointer-events:none"><div xmlns="http://www.w3.org/1999/xhtml" class="nc ${S.big?'big':''}"><div class="nid">${esc(s.id)} · ${esc(actorLabel(s.actor))}${(view==='tobe'&&s.change)?' <span class="chg"></span>':''}</div><div class="nt">${esc(s.title)}</div><div class="nw">${esc(compact(S.big ? s.what : (s.moves||s.what)))}</div><div class="nf">${nodeFlags(s, view)}</div></div></foreignObject></g>`;
+      out += `<g data-id="${esc(s.id)}" class="stepnode" onmouseenter="hoverStep('${esc(s.id)}')" onmouseleave="hoverStep(null)" onclick="openStep('${view}','${esc(s.id)}')"><rect class="${cls}" x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" rx="10"/><foreignObject x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" style="pointer-events:none"><div xmlns="http://www.w3.org/1999/xhtml" class="nc ${S.big?'big':''}"><div class="nid">${esc(s.id)} · ${esc(actorLabel(s.realActor || s.actor))}${(view==='tobe'&&s.change)?' <span class="chg"></span>':''}</div><div class="nt">${esc(s.title)}</div><div class="nw">${esc(compact(S.big ? s.what : (s.moves||s.what)))}</div><div class="nf">${nodeFlags(s, view)}${view==='asis' ? moveChip(state.port, state.dir, s) : ''}</div></div></foreignObject></g>`;
     }
     if (s.decision) { const d = B['D:'+s.id];
       if (d.collapsed) out += `<circle class="stub" cx="${d.x+9}" cy="${d.y+9}" r="7" style="fill:#d9a441"><title>${esc('Decision: '+s.decision.q)}</title></circle>`;
@@ -731,11 +775,12 @@ function renderSvg(view, steps, phases, sel, S, key){
 /* ===================== summary ===================== */
 function totalsOf(steps){
   let handoffs = 0; for (let i=1;i<steps.length;i++) if (steps[i].actor !== steps[i-1].actor) handoffs++;
-  return { steps:steps.length, manual:steps.filter(s=>s.manual).length, docs:steps.reduce((a,s)=>a+(s.docs||[]).length,0), signs:steps.reduce((a,s)=>a+(s.signs||[]).length,0), handoffs, revisits:steps.filter(s=>s.revisit).length, queues:steps.filter(s=>s.queue).length, decisions:steps.filter(s=>s.decision).length, validate:steps.filter(s=>s.validate).length, changed:steps.filter(s=>s.change).length, hot:steps.filter(s=>!isToBe(s) && timeAsIs(state.port,state.dir,s).level==='High').length, drop:steps.filter(s=>isToBe(s) && ['Removed','Much shorter'].includes(timeToBe(state.port,state.dir,s).change)).length, actors:new Set(steps.map(s=>s.actor).filter(a=>a!=='sys')).size };
+  return { steps:steps.length, manual:steps.filter(s=>s.manual).length, docs:steps.reduce((a,s)=>a+(s.docs||[]).length,0), signs:steps.reduce((a,s)=>a+(s.signs||[]).length,0), handoffs, revisits:steps.filter(s=>s.revisit).length, queues:steps.filter(s=>s.queue).length, decisions:steps.filter(s=>s.decision).length, validate:steps.filter(s=>s.validate).length, changed:steps.filter(s=>s.change).length, hot:steps.filter(s=>!isToBe(s) && timeAsIs(state.port,state.dir,s).level==='High').length, drop:steps.filter(s=>isToBe(s) && ['Removed','Much shorter'].includes(timeToBe(state.port,state.dir,s).change)).length, actors:new Set(steps.map(s=>s.actor).filter(a=>a!=='sys')).size, groups:new Set(steps.map(s=>lensOf(s.actor)).filter(a=>a&&a!=='sys')).size };
 }
-function kpiHtml(view, steps, actorKey){
-  const port = state.port, dir = state.dir; const focus = actorKey && actorKey !== 'all';
-  const mine = focus ? steps.filter(s => s.actor === actorKey) : steps; const t = totalsOf(mine);
+function kpiHtml(view, steps){
+  const port = state.port, dir = state.dir; const fset = focusSet(); const focus = !!fset; const actorKey = focus ? (state.actor !== 'all' ? state.actor : state.lens) : 'all';
+  const mine = focus ? steps.filter(s => fset.has(s.actor)) : steps; const t = totalsOf(mine);
+  const mvA = moveTotals(port, dir, view === 'asis' ? mine : resolveSteps('asis', dir, port).filter(a => mine.some(s => s.asis === a.id)), state.lens !== 'all' && state.actor === 'all' ? state.lens : 'all');
   const k = (v,l,c='') => `<div class="kpi ${c}"><b>${v}</b><span>${l}</span></div>`;
   const A = view==='asis' ? mine : resolveSteps('asis', dir, port).filter(a => mine.some(s => s.asis === a.id));
   const T = view==='tobe' ? mine : resolveSteps('tobe', dir, port).filter(x => x.asis && mine.some(s => s.id === x.asis));
@@ -744,14 +789,14 @@ function kpiHtml(view, steps, actorKey){
   const afterK = () => k(r.today || r.after ? `about ${esc(fmtH(r.after))}` : 'not timed', 'after paperless, assumed', 'chg');
   let h = '';
   if (focus) {
-    const name = actorLabel(actorKey); const edges = edgesFor(steps); const ids = new Set(mine.map(s => s.id)); const others = new Set(); let links = 0;
+    const name = focusLabel(); const edges = edgesFor(steps); const ids = new Set(mine.map(s => s.id)); const others = new Set(); let links = 0;
     edges.forEach(e => { const fa = e.from.replace(/^D:/,''), tb = e.to; if (tb.startsWith('D:')) return; const sa = stepById(steps, fa), sb = stepById(steps, tb); if (!sa || !sb) return; if (ids.has(fa) && !ids.has(tb)) { others.add(sb.actor); links++; } else if (ids.has(tb) && !ids.has(fa)) { others.add(sa.actor); links++; } });
     const phases = new Set(mine.map(s => s.phase)); const sysN = mine.filter(s => s.sys).length;
-    h = k(t.steps, `steps by ${esc(name)}`) + k(`${phases.size} of ${phaseList(dir).length}`, 'phases this actor is involved in') + k(links, `handoffs with ${others.size} other actor${others.size===1?'':'s'}`) + k(t.manual, 'manual or paper steps', 'hot') + k(t.docs, 'times a document is handled', 'hot') + k(t.signs, 'signatures and stamps', 'hot') + k(sysN, 'steps that create a system record (timestamp)') + k(t.queues, 'places a queue forms', 'hot');
+    const pa = portArrivals(port, dir); h = k(t.steps, `steps by ${esc(name)}`) + k(`${phases.size} of ${phaseList(dir).length}`, `phases ${esc(name)} is involved in`) + k(links, `handoffs with ${others.size} other actor${others.size===1?'':'s'}`) + (state.lens === 'port' && state.actor === 'all' ? k(pa.today, `arrivals of trucks, people and papers at the port's own places for one consignment; ${pa.after} after paperless`) : k(mvA.moves, `physical moves today (${mvA.truck} by truck, ${mvA.foot} on foot); ${mvA.after} after paperless`)) + k(t.manual, 'manual or paper steps', 'hot') + k(t.docs, 'times a document is handled', 'hot') + k(t.signs, 'signatures and stamps', 'hot') + k(sysN, 'steps that create a system record (timestamp)') + k(t.queues, 'places a queue forms', 'hot');
     if (view==='asis') h += todayK() + afterK(); else h += k(t.changed, 'steps that change', 'chg') + afterK() + todayK();
-    return `<div class="kpi-grid">${h}</div><p class="kpi-note">Counts and times above follow the actor filter: ${esc(name)} only. Choose "All actors" for the whole flow.${fmtCond(r)}</p>`;
+    return `<div class="kpi-grid">${h}</div><p class="kpi-note">Counts and times above follow the filter: ${esc(name)} only. Choose All for the whole flow.${fmtCond(r)}</p>`;
   }
-  h = k(t.steps,'steps') + k(t.actors,'actors involved') + k(t.manual,'manual or paper steps','hot') + k(t.docs,'times a paper document is presented, produced or carried','hot') + k(t.signs,'signatures and stamps','hot') + k(t.handoffs,'handoffs between actors') + k(t.revisits,'returns to a counter already visited','hot') + k(t.queues,'places a queue forms','hot') + k(t.decisions,'decision points') + (CLIENT_MODE ? '' : k(t.validate,'questions to validate'));
+  h = k(t.steps,'steps') + k(t.actors,`actors in ${t.groups} groups`) + k(mvA.stepsWithMove, 'steps with a physical move') + k(mvA.moves, `physical moves for one consignment (${mvA.truck} by truck, ${mvA.foot} on foot); ${mvA.after} after paperless`) + k(t.manual,'manual or paper steps','hot') + k(t.docs,'times a paper document is presented, produced or carried','hot') + k(t.signs,'signatures and stamps','hot') + k(t.handoffs,'handoffs between actors') + k(t.revisits,'returns to a counter already visited','hot') + k(t.queues,'places a queue forms','hot') + k(t.decisions,'decision points') + (CLIENT_MODE ? '' : k(t.validate,'questions to validate'));
   if (view==='tobe') h += k(t.changed,'steps that change','chg') + k(t.drop,'steps where waiting is removed or much shorter','chg') + afterK() + todayK();
   else if (port==='ben' && dir==='import') { const p = TIME.parts.stay; h += k(esc(fmtDur(p.typical,false)),'typical stay of an Indian truck, gate in to gate out (one month of data)','hot') + k(esc(fmtDur(p.slow,false)),'slow cases: one truck in ten stays longer than this','hot') + todayK() + afterK(); }
   else h += todayK() + afterK();
@@ -759,7 +804,7 @@ function kpiHtml(view, steps, actorKey){
 }
 function miniStrip(view, steps){
   const t = totalsOf(steps); const c = (l,v,cls='') => `<span class="q-chip ${cls}">${l}: <b>${v}</b></span>`;
-  return `<div class="quant-strip">${c('steps',t.steps)}${c('actors',t.actors)}${c('manual / paper',t.manual,t.manual?'hot':'')}${c('paper documents handled',t.docs,t.docs?'hot':'')}${c('signatures / stamps',t.signs,t.signs?'hot':'')}${c('handoffs',t.handoffs)}${c('revisits',t.revisits,t.revisits?'hot':'')}${c('queues',t.queues,t.queues?'hot':'')}${c('decisions',t.decisions)}${CLIENT_MODE?'':c('to validate',t.validate)}${view==='tobe'?c('steps that change',t.changed,'chg')+c('waiting removed or much shorter',t.drop,'chg'):c('time lost',t.hot,t.hot?'hot':'')}</div>`;
+  return `<div class="quant-strip">${c('steps',t.steps)}${c('actors',t.actors)}${(() => { const m = moveTotals(state.port, state.dir, view==='asis' ? steps : resolveSteps('asis', state.dir, state.port).filter(a => steps.some(s => s.asis === a.id))); return c('physical moves', `${m.moves}${view==='tobe' ? ' today, ' + m.after + ' after' : ''}`); })()}${c('manual / paper',t.manual,t.manual?'hot':'')}${c('paper documents handled',t.docs,t.docs?'hot':'')}${c('signatures / stamps',t.signs,t.signs?'hot':'')}${c('handoffs',t.handoffs)}${c('revisits',t.revisits,t.revisits?'hot':'')}${c('queues',t.queues,t.queues?'hot':'')}${c('decisions',t.decisions)}${CLIENT_MODE?'':c('to validate',t.validate)}${view==='tobe'?c('steps that change',t.changed,'chg')+c('waiting removed or much shorter',t.drop,'chg'):c('time lost',t.hot,t.hot?'hot':'')}</div>`;
 }
 
 /* ===================== toolbar ===================== */
@@ -771,12 +816,14 @@ function toolbarHtml(view, steps){
   const docOpts = ['<option value="">none</option>'].concat([...docKeys].map(k=>`<option value="${k}" ${state.doc===k?'selected':''}>${esc(DOCS[k]?.name||k)}</option>`)).join('');
   const phaseOpts = phaseList(state.dir).map(p=>`<option value="${p.key}">${p.n} · ${esc(p.label)}</option>`).join('');
   const zoom = state.mode==='full' ? `<div class="grp zoom"><b>Zoom</b><button type="button" onclick="zoom('${view}',-0.15)">−</button><button type="button" onclick="zoom('${view}',0.15)">+</button><button type="button" class="wide" onclick="fitWidth('${view}')">Fit width</button><button type="button" class="wide" onclick="setScale('${view}',1)">100%</button></div>` : '';
-  const hint = state.mode==='full' ? 'Drag to pan · click a step for detail · click a lane name to focus an actor' : state.mode==='phase' ? 'One diagram per phase, only the actors involved in it · click a step for detail' : 'One actor: the phases it is involved in, and every step it performs with who hands to it and whom it hands to';
+  const hint = state.mode==='full' ? 'Drag to pan · click a step for detail · click a lane name to focus an actor' : state.mode==='phase' ? 'One diagram per phase, only the actors involved in it · click a step for detail' : state.mode==='group' ? 'One lane per group: the port as one actor, the port users, the trucks, Customs and the agencies · click a step for detail' : 'One actor: the phases it is involved in, and every step it performs with who hands to it and whom it hands to';
   return `<div class="toolbar">
-    <div class="grp"><b>View</b><span class="seg"><button type="button" aria-pressed="${state.mode==='phase'}" onclick="setMode('phase')">By phase</button><button type="button" aria-pressed="${state.mode==='actor'}" onclick="setMode('actor')">By actor</button><button type="button" aria-pressed="${state.mode==='full'}" onclick="setMode('full')">Full map</button></span></div>
+    <div class="grp"><b>View</b><span class="seg"><button type="button" aria-pressed="${state.mode==='phase'}" onclick="setMode('phase')">By phase</button><button type="button" aria-pressed="${state.mode==='actor'}" onclick="setMode('actor')">By actor</button><button type="button" aria-pressed="${state.mode==='group'}" onclick="setMode('group')">By group</button><button type="button" aria-pressed="${state.mode==='full'}" onclick="setMode('full')">Full map</button></span></div>
     <div class="grp"><b>Port</b><span class="seg">${Object.entries(PORTS).map(([k,p])=>`<button type="button" aria-pressed="${state.port===k}" onclick="setPort('${k}')">${esc(p.name)}</button>`).join('')}</span></div>
     <div class="grp"><b>Direction</b><span class="seg"><button type="button" aria-pressed="${state.dir==='import'}" onclick="setDir('import')">Import</button><button type="button" aria-pressed="${state.dir==='export'}" onclick="setDir('export')">Export</button></span></div>
-    <div class="grp"><b>Actor</b><select onchange="selectActor(this.value)">${actorOpts}</select></div>
+    <div class="grp"><b>Lens</b><span class="seg"><button type="button" aria-pressed="${state.lens==='all'}" onclick="selectLens('all')">All</button>${LENS_MAIN.map(k=>`<button type="button" aria-pressed="${state.lens===k}" onclick="selectLens('${k}')">${esc(LENS[k].label)}</button>`).join('')}</span></div>
+    ${state.mode==='group' ? '' : `<div class="grp"><b>Actor</b><select onchange="selectActor(this.value)">${actorOpts}</select></div>`}
+    ${state.dir==='import' ? `<div class="grp"><b>Route</b><span class="seg">${Object.keys(ROUTES).filter(k => k !== 'stone' || state.port !== 'ben').map(k=>`<button type="button" aria-pressed="${state.route===k}" onclick="setRoute('${k}')">${esc(ROUTES[k] === 'All routes' ? 'All' : ROUTES[k].replace(' route',''))}</button>`).join('')}</span></div>` : ''}
     <div class="grp phases"><b>Phases</b>${phaseList(state.dir).map(p=>`<button type="button" class="ph-chip" onclick="jumpPhase('${view}','${p.key}')">${p.n} ${esc(p.label)}</button>`).join('')}</div>
     ${zoom}<span class="hint">${hint}</span></div>`;
 }
@@ -798,14 +845,14 @@ function stepCardHtml(view, s, steps, edges){
 
 /* ===================== views ===================== */
 function renderView(view){
-  const port = PORTS[state.port]; const steps = resolveSteps(view, state.dir, state.port);
+  const port = PORTS[state.port]; const steps = viewSteps(view, state.dir, state.port);
   const intro = FLOW_INTRO[view][state.dir][state.port] || FLOW_INTRO[view][state.dir].all || '';
   const el = document.getElementById(`${view}-panel`);
   const head = `<div class="card" style="margin-top:8px"><h2>${view==='asis'?'AS-IS: what happens today':'TO-BE: the paperless process'} · ${esc(state.dir==='import'?'Import':'Export')} · ${esc(port.name)}</h2>${view==='tobe'?'<div class="note-draft"><b>Work in progress.</b> The paperless process shown here is a proposal for discussion and validation with BLPA and the agencies. It is not a final design; every step is open to comment.</div>':''}${toolbarHtml(view, steps)}</div>`;
-  const summary = `<div class="card"><h2>Summary${state.actor!=='all'?` for ${esc(actorLabel(state.actor))}`:''} · ${esc(port.name)} · ${esc(state.dir)}</h2><p class="body">${esc(intro)}</p>${kpiHtml(view, steps, state.actor)}${TIME_CAVEAT()}</div>`;
+  const summary = `<div class="card"><h2>Summary${focusLabel()?` for ${esc(focusLabel())}`:''}${routeLabel()?` · ${esc(routeLabel().toLowerCase())}`:''} · ${esc(port.name)} · ${esc(state.dir)}</h2><p class="body">${esc(intro)}</p>${kpiHtml(view, steps)}${TIME_CAVEAT()}</div>`;
   let body = '';
   if (state.mode==='full') body = renderFull(view, steps);
-  else if (state.mode==='phase') body = renderByPhase(view, steps);
+  else if (state.mode==='phase' || state.mode==='group') body = renderByPhase(view, steps);
   else body = renderByActor(view, steps);
   let abolished = '';
   if (view==='tobe') { const asis = resolveSteps('asis', state.dir, state.port); const kept = new Set(steps.map(s=>s.asis).filter(Boolean)); const gone = asis.filter(s=>!kept.has(s.id)); if (gone.length) abolished = `<div class="card"><h2>Today's steps that disappear</h2><p>AS-IS steps with no TO-BE successor: the walks, papers and counter visits the paperless process removes.</p><ul>${gone.map(s=>{ const t = timeAsIs(state.port, state.dir, s); return `<li><b>${esc(s.id)} ${esc(s.title)}</b>: ${esc(actorLabel(s.actor))}${t.basis?` · today: ${esc(timeSummary(t))}`:''}</li>`; }).join('')}</ul></div>`; }
@@ -816,7 +863,7 @@ function renderView(view){
   el.querySelectorAll('.phase-head-row, .step-card, .actor-head').forEach(x => linkSteps(x, view, state.port, state.dir));
 }
 function renderFull(view, steps){
-  const r = renderSvg(view, steps, phaseList(state.dir), state.actor, SIZES.full, `${view}-full`);
+  const r = renderSvg(view, steps, phaseList(state.dir), focusSet(), SIZES.full, `${view}-full`);
   return `<div class="card"><h3 style="margin-top:0">Full map: every actor, every phase</h3><div class="map-wrap"><div class="viewport" id="vp-${view}"><div class="canvas" id="cv-${view}"><div class="lane-freeze" style="margin-right:-${r.laneHeadW}px">${r.heads}</div>${r.svg}</div></div></div></div>`;
 }
 function renderByPhase(view, steps){
@@ -826,12 +873,14 @@ function renderByPhase(view, steps){
     const ids = new Set(ps.map(s=>s.id));
     const inFrom = [...new Set(all.filter(e=>ids.has(e.to) && !ids.has(e.from.replace(/^D:/,''))).map(e=>{ const f = stepById(steps, e.from.replace(/^D:/,'')); return f ? `${f.id} (${actorLabel(f.actor)}, phase ${phaseList(state.dir).find(x=>x.key===f.phase)?.n})` : ''; }).filter(Boolean))];
     const outTo = [...new Set(all.filter(e=>ids.has(e.from.replace(/^D:/,'')) && !e.to.startsWith('D:') && !ids.has(e.to)).map(e=>{ const t = stepById(steps, e.to); return t ? `${t.id} (${actorLabel(t.actor)}, phase ${phaseList(state.dir).find(x=>x.key===t.phase)?.n})` : ''; }).filter(Boolean))];
-    const actors = `<span class="chip ${state.actor==='all'?'on':''}" onclick="selectActor('all')">All</span>` + [...new Set(ps.map(s=>s.actor))].filter(a=>a!=='sys').map(a=>`<span class="chip ${state.actor===a?'on':''}" onclick="selectActor('${a}')">${esc(actorLabel(a))}</span>`).join('');
-    const r = renderSvg(view, ps, [p], state.actor==='all'?'all':state.actor, SIZES.phase, `${view}-${p.key}`);
+    const grouped = state.mode === 'group';
+    const actors = grouped ? `<span class="chip ${state.lens==='all'?'on':''}" onclick="selectLens('all')">All</span>` + [...new Set(ps.map(s=>lensOf(s.actor)))].filter(a=>a!=='sys').map(a=>`<span class="chip ${state.lens===a?'on':''}" onclick="selectLens('${a}')">${esc(LENS[a].label)}</span>`).join('') : `<span class="chip ${state.actor==='all'?'on':''}" onclick="selectActor('all')">All</span>` + [...new Set(ps.map(s=>s.actor))].filter(a=>a!=='sys').map(a=>`<span class="chip ${state.actor===a?'on':''}" onclick="selectActor('${a}')">${esc(actorLabel(a))}</span>`).join('');
+    const r = grouped ? renderSvg(view, groupify(ps), [p], state.lens === 'all' ? null : new Set([state.lens]), SIZES.phase, `${view}-${p.key}`, lensLanes()) : renderSvg(view, ps, [p], focusSet(), SIZES.phase, `${view}-${p.key}`);
     const cvId = `cv-${view}-${p.key}`;
     return `<section class="card phase-card" id="ph-${view}-${p.key}"><div class="phase-head-row"><span class="stage-no">${p.n}</span><div><h3>${esc(p.label)}</h3><p>${esc(p.desc)}</p><p class="io"><b>Enters from:</b> ${inFrom.length?inFrom.map(esc).join('; '):'start of the flow'} · <b>Leaves to:</b> ${outTo.length?outTo.map(esc).join('; '):'end of the flow'}</p>${phaseTimeLine(view, ps)}${fbButton({type:'phase', view, port:state.port, dir:state.dir, id:p.key, label:`${view==='asis'?'AS-IS':'TO-BE'} ${PORTS[state.port].name} ${state.dir} phase ${p.n} ${p.label}`})}</div></div><div class="actor-chips"><b>Actors involved</b>${actors}</div>${miniStrip(view, ps)}<div class="map-wrap"><div class="viewport short" id="vp-${view}-${p.key}"><div class="canvas" id="${cvId}"><div class="lane-freeze" style="margin-right:-${r.laneHeadW}px">${r.heads}</div>${r.svg}</div></div></div></section>`;
   }).join('');
 }
+function groupify(steps){ return steps.map(s => Object.assign({}, s, { actor: lensOf(s.actor), realActor: s.actor })); }
 function renderByActor(view, steps){
   const used = ACTORS.filter(a=>a.key!=='sys' && steps.some(s=>s.actor===a.key));
   if (state.actor==='all' || !used.find(a=>a.key===state.actor)) state.actor = used[0]?.key || 'all';
@@ -847,14 +896,13 @@ function renderByActor(view, steps){
 
 function phaseActorLine(view, ps, p){
   const port = state.port, dir = state.dir; const ids = new Set(ps.map(s => s.id)); const key = state.actor;
-  const TRAV = { cf: ['cf'], drv: ['itruck', 'driver', 'ltruck'] }; const tk = TRAV[key] || []; const sp = SPAG[port]; let moves = 0; const places = new Set();
-  if (sp && dir === 'import' && view === 'asis') sp.travellers.forEach(t => { if (!tk.includes(t.key)) return; t.moves.forEach(m => { if (ids.has(m.step)) { moves++; places.add(m.from); places.add(m.to); } }); });
+  const mvT = moveTotals(port, dir, view === 'asis' ? ps : resolveSteps('asis', dir, port).filter(a => ps.some(s => s.asis === a.id)), lensOf(key)); const moves = mvT.moves; const tk = moves ? [1] : [];
   const docs = ps.reduce((n, s) => n + (s.docs||[]).length, 0), signs = ps.reduce((n, s) => n + (s.signs||[]).length, 0), paper = ps.filter(s => s.manual).length;
   const A = view === 'asis' ? ps : resolveSteps('asis', dir, port).filter(a => ps.some(s => s.asis === a.id));
   const T = view === 'tobe' ? ps : resolveSteps('tobe', dir, port).filter(x => x.asis && ps.some(s => s.id === x.asis));
   const r = timeTotals(port, dir, A, T); let drop = 0; if (view === 'tobe') ps.forEach(s => { const c = timeToBe(port, dir, s).change; if (c === 'Removed' || c === 'Much shorter') drop++; });
   const parts = [`${ps.length} step${ps.length===1?'':'s'}`, `${paper} on paper`, `${docs} document${docs===1?'':'s'} handled`, `${signs} signature${signs===1?'':'s'}`];
-  if (tk.length && view === 'asis') parts.push(`${moves} move${moves===1?'':'s'} between ${places.size} places`);
+  if (moves) parts.push(`${moves} physical move${moves===1?'':'s'} today, ${mvT.after} after paperless`);
   if (view === 'tobe') parts.push(`${drop} step${drop===1?'':'s'} where the wait is removed or much shorter`);
   return `<div class="phase-sum"><b>Phase ${p.n} for ${esc(actorLabel(key))}:</b> ${esc(parts.join(' · '))} · time in these steps today: ${fmtToday(r)} · after paperless: ${fmtAfter(r)}${fmtCond(r)}</div>`;
 }
@@ -871,13 +919,15 @@ function bindPan(id){
   window.addEventListener('mousemove', e => { if(!down) return; vp.scrollLeft = sl-(e.clientX-sx); vp.scrollTop = st-(e.clientY-sy); });
 }
 function jumpPhase(view, key){ if(!key) return;
-  if (state.mode==='full') { const steps = resolveSteps(view, state.dir, state.port); const lay = computeLayout(steps, phaseList(state.dir), state.actor, SIZES.full); const ps = lay.phaseSlots[key]; const vp = document.getElementById(`vp-${view}`); vp.scrollTo({left:(lay.slotX(ps.start)-20)*state.scale[view], behavior:'smooth'}); }
+  if (state.mode==='full') { const steps = viewSteps(view, state.dir, state.port); const lay = computeLayout(steps, phaseList(state.dir), focusSet(), SIZES.full); const ps = lay.phaseSlots[key]; const vp = document.getElementById(`vp-${view}`); vp.scrollTo({left:(lay.slotX(ps.start)-20)*state.scale[view], behavior:'smooth'}); }
   else { const el = document.getElementById(state.mode==='phase' ? `ph-${view}-${key}` : `ac-${view}-${key}`); if (el) el.scrollIntoView({behavior:'smooth', block:'start'}); }
 }
-function setMode(m){ if (state.mode==='actor' && m!=='actor') state.actor = 'all'; state.mode = m; rerenderMaps(); }
-function setPort(k){ state.port = k; rerenderMaps(); }
-function setDir(d){ state.dir = d; state.doc=''; rerenderMaps(); }
-function selectActor(k){ if (state.mode==='actor') state.actor = k; else state.actor = (state.actor===k && k!=='all') ? 'all' : k; rerenderMaps(); }
+function setMode(m){ if (state.mode==='actor' && m!=='actor') state.actor = 'all'; if (m === 'group') state.actor = 'all'; state.mode = m; rerenderMaps(); }
+function selectLens(k){ state.lens = (state.lens === k || k === 'all') ? 'all' : k; if (k !== 'all') state.actor = 'all'; rerenderMaps(); }
+function setRoute(r){ if (r === 'stone' && state.port === 'ben') r = 'all'; state.route = r; rerenderMaps(); }
+function setPort(k){ state.port = k; if (k === 'ben' && state.route === 'stone') state.route = 'all'; rerenderMaps(); }
+function setDir(d){ state.dir = d; state.doc=''; if (d !== 'import') state.route = 'all'; rerenderMaps(); }
+function selectActor(k){ if (LENS[k]) return selectLens(k); if (k !== 'all') state.lens = 'all'; if (state.mode==='actor') state.actor = k; else state.actor = (state.actor===k && k!=='all') ? 'all' : k; rerenderMaps(); }
 function setDoc(k){ state.doc = k; ['asis','tobe'].forEach(applyDocHighlight); }
 function applyDocHighlight(view){
   const panel = document.getElementById(`${view}-panel`); if (!panel) return;
@@ -910,7 +960,7 @@ function openStep(view, id){
   const rv = `<div class="rvbox rv"><b>Reviewer:</b> evidence ${esc(s.evidence||'none')} · source ${esc(s.src||'none')}${s.ports?` · ports ${s.ports.join(', ')}`:''}${(view==='tobe'&&s.status)?` · status ${esc(s.status)}`:''}</div>`;
   const nav = `<div class="navbtns">${idx>0?`<button type="button" onclick="openStep('${view}','${esc(steps[idx-1].id)}')">← ${esc(steps[idx-1].id)}</button>`:''}${idx<steps.length-1?`<button type="button" onclick="openStep('${view}','${esc(steps[idx+1].id)}')">${esc(steps[idx+1].id)} →</button>`:''}<button type="button" onclick="state.mode='actor';selectActor('${s.actor}')">Show this actor's flow</button></div>`;
   document.getElementById('drawer-body').innerHTML = `<div class="sid">${view==='asis'?'AS-IS':'TO-BE'} · ${esc(PORTS[state.port].name)} · ${esc(state.dir)} · step ${esc(s.id)}</div><h3>${esc(s.title)}</h3><span class="actor-chip">${esc(a?.label||s.actor)}</span><span class="phase-chip">Phase ${ph?ph.n+' · '+ph.label:''}</span><div>${tags}</div>
-  <dl><dt>What happens</dt><dd>${esc(s.what)}</dd><dt>Comes from</dt><dd>${preds.length?preds.join('<br>'):'Start of the flow'}</dd><dt>What triggers it</dt><dd>${esc(s.trigger)}</dd><dt>What physically moves</dt><dd>${esc(s.moves)}</dd><dt>Documents involved</dt><dd>${docs}</dd><dt>Signatures / stamps</dt><dd>${signs}</dd><dt>System record</dt><dd>${sys}</dd>${dec}<dt>Hands to</dt><dd>${succs.length?succs.join('<br>'):''}${s.handoff?`<br><i>${esc(s.handoff)}</i>`:''}</dd>${s.note?`<dt>Note</dt><dd>${esc(s.note)}</dd>`:''}</dl>${timeBoxHtml(view, s)}${change}${pairing}${validate}${rv}${fbBlock({type:'step', view, port:state.port, dir:state.dir, id:s.id, label:`${view==='asis'?'AS-IS':'TO-BE'} ${PORTS[state.port].name} ${state.dir} step ${s.id}: ${s.title}`})}${nav}`;
+  <dl><dt>What happens</dt><dd>${esc(s.what)}</dd><dt>Comes from</dt><dd>${preds.length?preds.join('<br>'):'Start of the flow'}</dd><dt>What triggers it</dt><dd>${esc(s.trigger)}</dd><dt>What physically moves</dt><dd>${esc(s.moves)}</dd><dt>Documents involved</dt><dd>${docs}</dd><dt>Signatures / stamps</dt><dd>${signs}</dd><dt>System record</dt><dd>${sys}</dd>${dec}<dt>Hands to</dt><dd>${succs.length?succs.join('<br>'):''}${s.handoff?`<br><i>${esc(s.handoff)}</i>`:''}</dd>${s.note?`<dt>Note</dt><dd>${esc(s.note)}</dd>`:''}${view==='asis' && stepMoves(state.port, state.dir, s.id).length ? `<dt>Physical moves</dt><dd>${stepMoves(state.port, state.dir, s.id).map(x => `${esc(spagFor(state.port, state.dir).travellers.find(t => t.key === x.t)?.label || x.t)}: ${esc(x.m.why)} <small>(${moveStays(state.port, state.dir, x.m, x.t) ? 'still happens after paperless' : 'disappears after paperless'})</small>`).join('<br>')}</dd>` : ''}</dl>${timeBoxHtml(view, s)}${change}${pairing}${validate}${rv}${fbBlock({type:'step', view, port:state.port, dir:state.dir, id:s.id, label:`${view==='asis'?'AS-IS':'TO-BE'} ${PORTS[state.port].name} ${state.dir} step ${s.id}: ${s.title}`})}${nav}`;
   linkSteps(document.getElementById('drawer-body'), view, state.port, state.dir);
   document.getElementById('drawer').classList.add('open');
   document.querySelectorAll('.map-svg rect.node.active').forEach(r=>r.classList.remove('active'));
@@ -954,58 +1004,13 @@ function renderValidate(){
   document.getElementById('validate-panel').innerHTML = `<div class="card"><h2>Questions to validate, step by step</h2><p>Each question sits on the step it belongs to (open the step to see it in context). Answering them is the next working session; answers go straight into the map.</p>${table(['Step','Title','Actor','Ports','Question','<span class="rv">Ref</span>'], rows, 1200)}</div>
   <div class="card rv"><h2>Reviewer: clarification register</h2><p>Internal register of blocking and detail gaps, linked from the steps.</p>${table(['ID','Affected steps','Clarification required','Why it matters','Expected clarifier','Level'], gaps, 1200)}</div>`;
 }
+const INCEPTION_BRIDGE = [['1','Outside BCP','1 Pre-arrival','1.3 to 1.8: the Indian side, the queue and zero point'],['2','Gate entry and checks','1 and 2','1.9 to 2.3: BGB, the Customs cabin and the BLPA gate'],['3','Weighbridge','3 Weighing','3.1 to 3.3'],['4A','Posting assignment','4 Posting and routing','4.1 to 4.3'],['5A','Warehouse notification','4 Posting and routing','4.4 and 4.5: the shed is told and the truck drives there'],['6A','Warehouse or yard handling','5 Warehouse and examination','5.1 to 5.6, including the Customs file check and examination'],['4B','Perishable bypass','6 Transshipment','6.1 to 6.5: truck-to-truck transfer'],['7','Outbound gate pass','10 BLPA charges, Exit Pass and exit','10.5 to 10.8: the Exit Pass and the gate'],['8','Billing','10 BLPA charges, Exit Pass and exit','10.1 and 10.2'],['9','Bank payment','8 and 10','8.2 duty at the bank; 10.3 and 10.4 port charges'],['10','Release readiness','8 Clearance','8.1 to 8.4: assessment and the Release Order; 9 loading of the local truck'],['11','Final exit','7 and 10','7.1 to 7.4 the empty Indian truck; 10.9 and 10.10 the loaded local truck and closure']];
 function renderOverview(){
   const lanes = ACTORS.map(a=>`<div class="legend-box" style="border-left:4px solid ${a.group==='blpa'?'#218455':a.group==='sys'?'#5f7f96':'#87949d'}"><h4>${esc(a.label)}</h4>${esc(a.sub||'')}</div>`).join('');
-  document.getElementById('overview-panel').innerHTML = OVERVIEW_HTML.replace('{{LANES}}', `<div class="legend-grid">${lanes}</div>`).replace('{{PHASES_IMPORT}}', PHASES.import.map(p=>`<li><b>${p.n} · ${esc(p.label)}</b>: ${esc(p.desc)}</li>`).join('')).replace('{{PHASES_EXPORT}}', PHASES.export.map(p=>`<li><b>${p.n} · ${esc(p.label)}</b>: ${esc(p.desc)}</li>`).join(''));
+  const bridge = `<div class="card"><h2>How this map relates to the inception report</h2><p class="body">The inception report annex showed the Benapole import process as eleven boxes. This map is the same process at step level. The table says where each box sits here, so that nothing shared earlier is lost.</p>${xtable(['Inception box','Name in the inception report','Phase in this map','Steps in this map'], INCEPTION_BRIDGE.map(r => `<tr><td class="k">${esc(r[0])}</td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td></tr>`), 800, 'BLPA_inception_bridge')}</div><div class="card"><h2>Three ways to read the same process</h2><p class="body">Every tab can be read for the port as one actor, for the port users (the C&F agent and the trader) or for the trucks and drivers: choose a lens on the AS-IS, TO-BE and re-engineering tabs, or the group view that draws one lane per group. Steps, documents, signatures, physical moves and time are counted for that lens alone.</p><div class="legend-grid">${LENS_ORDER.map(k => `<div class="legend-box"><h4>${esc(LENS[k].label)}</h4>${esc(LENS[k].sub)}</div>`).join('')}</div></div>`;
+  document.getElementById('overview-panel').innerHTML = OVERVIEW_HTML.replace('{{LANES}}', `<div class="legend-grid">${lanes}</div>`).replace('{{PHASES_IMPORT}}', PHASES.import.map(p=>`<li><b>${p.n} · ${esc(p.label)}</b>: ${esc(p.desc)}</li>`).join('')).replace('{{PHASES_EXPORT}}', PHASES.export.map(p=>`<li><b>${p.n} · ${esc(p.label)}</b>: ${esc(p.desc)}</li>`).join('')) + bridge;
+  linkSteps(document.getElementById('overview-panel').lastElementChild.previousElementSibling, 'asis', 'ben', 'import');
 }
-
-/* ===================== spaghetti ===================== */
-function renderSpaghetti(){
-  const sp = SPAG[state.spagPort]; const el = document.getElementById('spaghetti-panel');
-  const ports = Object.entries(PORTS).map(([k,p])=>`<button type="button" aria-pressed="${state.spagPort===k}" onclick="state.spagPort='${k}';state.trav='all';renderSpaghetti()">${esc(p.name)}</button>`).join('');
-  const travBtns = [`<button type="button" aria-pressed="${state.trav==='all'}" onclick="state.trav='all';renderSpaghetti()">All travellers</button>`].concat(sp.travellers.map(t=>`<button type="button" aria-pressed="${state.trav===t.key}" style="${state.trav===t.key?`background:${t.color};border-color:${t.color}`:''}" onclick="state.trav='${t.key}';renderSpaghetti()"><span class="swatch" style="background:${t.color}"></span>${esc(t.label)}</button>`)).join('');
-  const nodeById = Object.fromEntries(sp.nodes.map(n=>[n.id,n]));
-  const shown = sp.travellers.filter(t => state.trav==='all' || t.key===state.trav);
-  const asisSteps = resolveSteps('asis','import',state.spagPort), tobeSteps = resolveSteps('tobe','import',state.spagPort);
-  const stepTime = id => { const s = stepById(asisSteps, id); return s ? timeAsIs(state.spagPort,'import',s) : {basis:'',level:'',hours:null}; };
-  const RANK = {High:3, Medium:2, Low:1};
-  const nodeLevel = {}, nodeHours = {}, nodeSteps = {};
-  sp.travellers.forEach(t => t.moves.forEach(m => { const x = stepTime(m.step); if (x.role === 'carry' && (!nodeLevel[m.to] || RANK[x.level] > RANK[nodeLevel[m.to]])) nodeLevel[m.to] = x.level; (nodeSteps[m.to] = nodeSteps[m.to] || new Set()).add(m.step); }));
-  Object.entries(nodeSteps).forEach(([id, set]) => { nodeHours[id] = [...set].reduce((n, sid) => n + hoursOf(stepTime(sid)), 0); });
-  const afterPaperless = id => { const succ = tobeSteps.filter(x => x.asis === id); if (!succ.length) return 'this move disappears'; const c = timeToBe(state.spagPort,'import',succ[0]).change; return c==='Same' ? 'as today' : c==='Outside BLPA' ? 'outside BLPA' : c.toLowerCase(); };
-  const moveTime = id => { const s = stepById(asisSteps, id); if (!s) return ''; const chip = timeChip(s, state.spagPort, 'import').replace('class="t', 'class="tag t'); if (chip) return chip; const x = timeAsIs(state.spagPort, 'import', s); if (x.nodata) return '<span class="muted">not timed at this port</span>'; if (x.role === 'within' || x.role === 'moment') return `<span class="muted">inside the time at ${esc(x.part.at)}</span>`; if (x.basis === 'reported') return '<span class="muted">wait reported, not timed</span>'; return '<span class="muted">not timed</span>'; };
-  const W = sp.width || 1500, H = sp.height || 720;
-  const nodeSvg = sp.nodes.map(n=>{ const w=n.w||150, h=n.h||46; const fill = n.type==='blpa'?'#e8f4ed':n.type==='cus'?'#eef1f3':n.type==='cf'?'#f1eafe':n.type==='bank'?'#fff4d8':n.type==='ext'?'#f5f7f8':'#fff'; const lv = nodeLevel[n.id]; const stroke = lv==='High'?'#b94646':lv==='Medium'?'#b47d13':'#7d8c84'; return `<g><rect x="${n.x-w/2}" y="${n.y-h/2}" width="${w}" height="${h}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${lv?2.2:1.2}"/>${lv?`<g><circle cx="${n.x+w/2-2}" cy="${n.y-h/2+2}" r="8" fill="${stroke}"/><text x="${n.x+w/2-2}" y="${n.y-h/2+5.5}" text-anchor="middle" font-size="9" fill="#fff" font-weight="800">${lv==='High'?'H':'M'}</text><title>${esc('Waiting here is rated '+lv)}</title></g>`:''}<foreignObject x="${n.x-w/2}" y="${n.y-h/2}" width="${w}" height="${h}"><div xmlns="http://www.w3.org/1999/xhtml" style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center;font:10.5px/1.2 Segoe UI,Arial,sans-serif;font-weight:800;color:#193426;padding:3px 6px">${esc(n.label)}</div></foreignObject></g>`; }).join('');
-  const pair = {};
-  const edgeSvg = shown.map(t => t.moves.map((m,i)=>{ const a=nodeById[m.from], b=nodeById[m.to]; if(!a||!b) return ''; const key=[m.from,m.to].sort().join('|'); pair[key]=(pair[key]||0)+1; const k=pair[key]; const dx=b.x-a.x, dy=b.y-a.y, len=Math.max(1,Math.hypot(dx,dy)); const nx=-dy/len, ny=dx/len; const off=(k-1)*16-8; const mx=(a.x+b.x)/2+nx*(off+22), my=(a.y+b.y)/2+ny*(off+22); return `<path d="M${a.x},${a.y} Q${mx},${my} ${b.x},${b.y}" fill="none" stroke="${t.color}" stroke-width="${t.width||2.2}" ${t.dash?`stroke-dasharray="${t.dash}"`:''} marker-end="url(#sp-${t.key})" opacity=".9"/><circle cx="${(a.x+2*mx+b.x)/4}" cy="${(a.y+2*my+b.y)/4}" r="9" fill="${t.color}" stroke="#fff" stroke-width="1.5"/><text x="${(a.x+2*mx+b.x)/4}" y="${(a.y+2*my+b.y)/4+3.5}" text-anchor="middle" font-size="9" font-weight="800" fill="#fff">${i+1}</text>`; }).join('')).join('');
-  const defs = sp.travellers.map(t=>`<marker id="sp-${t.key}" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${t.color}"/></marker>`).join('');
-  const zones = (sp.zones||[]).map(z=>`<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="12" fill="#fafcfb" stroke="#dce5df" stroke-dasharray="4 3"/><text x="${z.x+10}" y="${z.y+16}" font-size="10" font-weight="800" fill="#68756d">${esc(z.label)}</text>`).join('');
-  const touches = {};
-  sp.travellers.forEach(t => t.moves.forEach((m,i) => { (touches[m.to] = touches[m.to] || []).push({t, i, m}); }));
-  const touchRows = sp.nodes.filter(n=>touches[n.id]).map(n => { const list = touches[n.id]; const byT = {}; list.forEach(x => { (byT[x.t.label] = byT[x.t.label] || []).push(`${x.m.why} (step ${x.m.step})`); }); const hrs = nodeHours[n.id] || 0; const conds = [...(nodeSteps[n.id]||[])].map(id => { const x = stepTime(id); return x.cond && x.hours != null ? `${fmtH(x.hours)} at ${id} when it applies` : ''; }).filter(Boolean); const lv = nodeLevel[n.id];
-    return `<tr><td class="k">${esc(n.label)}</td><td><b>${list.length}</b></td><td>${hrs ? `<b>about ${esc(fmtH(hrs))}</b>${lv?` <span class="tag t ${levelClass(lv)}">${esc(lv)}</span>`:''}` : '<span class="muted">none carried here</span>'}${conds.length?`<div class="cond">+ ${esc(conds.join('; '))}</div>`:''}</td><td>${Object.entries(byT).map(([k,v])=>`<div class="touch-who"><b>${esc(k)}</b>, ${v.length===1?'once':v.length===2?'twice':v.length+' times'}: ${v.map(x=>esc(x)).join('; ')}</div>`).join('')}</td></tr>`; });
-  const afterClass = a => (a==='this move disappears'||a==='removed'||a==='much shorter') ? 'drop' : a==='shorter' ? 'less' : a==='visible' ? 'vis' : 'same';
-  const travTotals = t => { const ids = [...new Set(t.moves.map(m => m.step))]; const A = ids.map(id => stepById(asisSteps, id)).filter(Boolean); const T = tobeSteps.filter(x => x.asis && ids.includes(x.asis)); return timeTotals(state.spagPort, 'import', A, T); };
-  const travBlock = t => {
-    const after = t.moves.map(m => afterPaperless(m.step)); const r = travTotals(t);
-    const gone = after.filter(a=>a==='this move disappears').length, drop = after.filter(a=>a==='removed'||a==='much shorter').length, less = after.filter(a=>a==='shorter').length;
-    const places = new Set(t.moves.flatMap(m=>[m.from,m.to])).size; const foot = /foot|file/i.test(t.label);
-    const stay = (t.key==='itruck' && state.spagPort==='ben') ? `<span class="meas" title="Measured: gate in to gate out, one month of data">typical stay in the port <b>${esc(fmtDur(TIME.parts.stay.typical,false))}</b>; one truck in ten over <b>${esc(fmtDur(TIME.parts.stay.slow,false))}</b></span>` : '';
-    const sum = `<div class="tv-sum"><span><b>${t.moves.length}</b> moves${foot?' on foot':''}</span><span><b>${places}</b> places</span><span class="meas">time in these moves today: ${fmtToday(r)}</span><span class="chg">after paperless: ${fmtAfter(r)}</span>${stay}<span class="chg"><b>${gone}</b> moves disappear</span><span class="chg"><b>${drop}</b> removed or much shorter</span>${less?`<span class="chg"><b>${less}</b> shorter</span>`:''}</div>${fmtCond(r)}`;
-    const rows = t.moves.map((m,i) => `<tr><td class="n">${i+1}</td><td><b>${esc(nodeById[m.from]?.label)}</b><span class="arr">to</span><b>${esc(nodeById[m.to]?.label)}</b><div class="why">${esc(m.why)}</div></td><td class="st"><button type="button" class="rt-link" onclick="state.port=state.spagPort;state.dir='import';['asis','tobe'].forEach(v=>{const p=document.getElementById(v+'-panel');if(p.hidden)p.dataset.stale='1';});openStep('asis','${esc(m.step)}')">${esc(m.step)}</button></td><td class="tm">${moveTime(m.step)}</td><td class="af"><span class="tag t ${afterClass(after[i])}">${esc(after[i]==='this move disappears'?'disappears':after[i])}</span></td></tr>`).join('');
-    const ids = [...new Set(t.moves.map(m => m.step))]; const S = ids.map(id => stepById(asisSteps, id)).filter(Boolean); const docsN = S.reduce((n, x) => n + (x.docs||[]).length, 0), signsN = S.reduce((n, x) => n + (x.signs||[]).length, 0), paperN = S.filter(x => x.manual).length; const docNames = [...new Set(S.flatMap(x => (x.docs||[]).map(d => DOCS[d.doc]?.short || d.doc)))];
-    const srow = (l, v) => `<tr><td class="k">${l}</td><td>${v}</td></tr>`;
-    const summary = `<div class="asum tv-total"><div class="asum-head"><b>Summary for ${esc(t.label)}</b> · ${esc(PORTS[state.spagPort].name)} · import</div><table class="asum-table"><tbody>${srow('Moves', `<b>${t.moves.length}</b>${foot ? ' on foot' : ''} between <b>${places}</b> places`)}${srow('Steps of the map involved', `<b>${S.length}</b>: ${S.map(x => `<button type="button" class="rt-link" onclick="goStep('asis','import','${esc(x.id)}','${state.spagPort}')">${esc(x.id)}</button>`).join(' ')}`)}${srow('Paper or manual steps', `<b>${paperN}</b> of ${S.length}`)}${srow('Documents handled', `<b>${docsN}</b>${docNames.length ? ` (${esc(docNames.join(', '))})` : ''}`)}${srow('Signatures and stamps', `<b>${signsN}</b>`)}${srow('Time in these steps today', fmtToday(r))}${srow('After paperless', fmtAfter(r) + (r.today && r.after < r.today ? ` <small>about ${esc(fmtH(r.today - r.after))} less</small>` : ''))}${srow('Moves after paperless', `<b>${gone}</b> disappear, <b>${drop}</b> removed or much shorter${less ? `, <b>${less}</b> shorter` : ''}; ${t.moves.length - gone} remain`)}${t.key==='itruck' && state.spagPort==='ben' ? srow('Whole stay in the port (measured)', `typically <b>${esc(fmtDur(TIME.parts.stay.typical,false))}</b>; one truck in ten over <b>${esc(fmtDur(TIME.parts.stay.slow,false))}</b>`) : ''}</tbody></table>${fmtCond(r)}</div>`;
-    return `<section class="tv"><h3><span class="swatch" style="background:${t.color}"></span>${esc(t.label)}</h3><p class="tv-desc">${esc(t.desc)}</p>${xwrap(`<table class="tv-table"><thead><tr><th>#</th><th>Move: from, to, and why</th><th>Step</th><th>Time today</th><th>After paperless</th></tr></thead><tbody>${rows}</tbody></table>`, `BLPA_spaghetti_${PORTS[state.spagPort].name}_${t.key}`)}${summary}</section>`;
-  };
-  const lists = shown.map(travBlock).join('');
-  el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Spaghetti: who walks where for one import consignment</h2><p class="body">${esc(sp.intro)}</p><div class="toolbar"><div class="grp"><b>Port</b><span class="seg">${ports}</span></div><div class="grp"><b>Traveller</b><span class="trav">${travBtns}</span></div><span class="hint">Numbers on the lines are the order of moves for that traveller; each traveller's table lists its moves in order with the step, the time carried at that step today and what happens to the move after paperless; pick one traveller to see its table in full width. A red H or orange M on a location marks a measured wait rated High or Medium.</span></div>
-  <div class="spag-layout single"><div><svg class="spag-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"><defs>${defs}</defs><rect width="${W}" height="${H}" fill="#fff"/>${zones}${edgeSvg}${nodeSvg}</svg></div><div class="spag-panel">${lists}</div></div>
-  <h3>Arrivals per location, and why each one happens</h3><p>Each row is a place. The count is how many times someone or something arrives there for one consignment; the time is the sum of the figures carried by the steps that arrive there (each step counted once); the text says who arrives, how often, and for which step.</p>${xtable(['Location','Arrivals','Time carried here today','Who arrives, how often, and why'], touchRows, 900, `BLPA_spaghetti_places_${PORTS[state.spagPort].name}`)}${TIME_CAVEAT()}
-  ${sp.findings?`<h3>What the picture says</h3><ul>${sp.findings.map(f=>`<li>${esc(f)}</li>`).join('')}${(() => { const ids = [...new Set(sp.travellers.flatMap(t => t.moves.map(m => m.step)))]; const r = timeTotals(state.spagPort, 'import', ids.map(id => stepById(asisSteps, id)).filter(Boolean), tobeSteps.filter(x => x.asis && ids.includes(x.asis))); const gone = sp.travellers.reduce((a,t)=>a+t.moves.filter(m=>afterPaperless(m.step)==='this move disappears').length,0), all = sp.travellers.reduce((a,t)=>a+t.moves.length,0), dropN = sp.travellers.reduce((a,t)=>a+t.moves.filter(m=>['removed','much shorter'].includes(afterPaperless(m.step))).length,0); return `<li><b>Time:</b> the steps behind these moves carry ${fmtToday(r)} today and ${fmtAfter(r)} after paperless${state.spagPort==='ben' ? `; an Indian truck typically stays ${esc(fmtDur(TIME.parts.stay.typical))} from gate in to gate out, and ${TIME.parts.recv.share}% of the average stay is between the posting record and the warehouse receipt` : ' (no truck data for this port yet: the measured steps carry no figure here and only the assumed steps are counted)'}. After paperless, ${gone} of the ${all} moves disappear and ${dropN} more are removed or become much shorter.</li>`; })()}</ul>`:''}</div>`;
-  linkSteps(el, 'asis', state.spagPort, 'import');
-}
-
 
 /* ===================== time tab ===================== */
 function renderTime(){
@@ -2386,6 +2391,157 @@ SPAG.bur = makeSpag('bur', 'One import consignment at Burimari. The gate, BGB po
   'The C&F agent goes to the on-site bank booth twice (duty, then port charges) and back to the counter each time; with a same-day pass, the booth\'s closing time decides whether the truck leaves today.',
   'The Exit Pass needs a BLPA stamp and a Customs stamp, so the C&F agent walks the pass to Customs after BLPA has issued it; the gate then releases on a visual check.'
 ]);
+/* ===================== SPAGHETTI, export: one loaded Bangladeshi truck, the C&F agent and the paper file ===================== */
+const SPAGX = {};
+function baseNodesX(port){
+  return [
+    {id:'india', label:'Indian side: transfer to Indian trucks; Indian Customs', x:135, y:250, type:'ext', w:190},
+    {id:'approach', label:'Approach road: export queue toward the port', x:385, y:120, type:'ext', w:190},
+    {id:'cexit', label:'Customs operator at the exit gate (same desk as BLPA)', x:385, y:430, type:'cus', w:190},
+    {id:'gate', label:'BLPA entry gate (ISLAS entry; cash fee)', x:640, y:120, type:'blpa', w:170},
+    {id:'wb', label:'Weighbridge (ISLAS; Customs countersigns)', x:640, y:330, type:'blpa', w:170},
+    {id:'yard', label:'Export yard: truck waits for clearance', x:880, y:330, type:'blpa', w:170},
+    {id:'exit', label:'BLPA exit gate', x:640, y:600, type:'blpa'},
+    {id:'cfo', label:'C&F office', x:1130, y:120, type:'cf'},
+    {id:'asy', label:'Customs: export desk (inspection, assessment, print)', x:1130, y:300, type:'cus', w:190},
+    {id:'oga', label:'Agency office or laboratory (sample test)', x:1130, y:470, type:'cus', w:190},
+    {id:'bank', label:port==='bur'?'Sonali Bank booth on site (export fees; port charges)':'Bank counters (export fees; port charges)', x:1400, y:340, type:'bank', w:170},
+    {id:'bill', label:'BLPA billing counter (bill, exit note)', x:1400, y:520, type:'blpa', w:170}
+  ];
+}
+function baseTravellersX(port){
+  const T = [];
+  T.push(trav('xtruck', 'One loaded Bangladeshi export truck; the driver stays with it, hands over the papers at the gate and pays the cash fees.', [
+    {from:'approach', to:'gate', step:'2.1', why:'reaches the BLPA gate after the export queue; entered in ISLAS; cash entry fee'},
+    {from:'gate', to:'wb', step:'3.1', why:'loaded weighing; slip signed by BLPA and countersigned by Customs'},
+    {from:'wb', to:'yard', step:'4.1', why:'waits in the yard for inspection, assessment and the exit note'},
+    {from:'yard', to:'exit', step:'6.1', why:'leaves with the signed exit note; checked at the exit desk'},
+    {from:'exit', to:'cexit', step:'6.1', why:'Customs operator at the same desk checks its own signatures'},
+    {from:'cexit', to:'india', step:'6.2', why:'crosses; cargo transferred to Indian trucks; returns empty'},
+    {from:'india', to:'gate', step:'7.2', why:'empty return recorded at the entry gate; cash terminal fee'}
+  ]));
+  Object.assign(T[0], TRAV_STYLE.xtruck);
+  T.push(trav('cf', 'The C&F agent and the border man: the papers, the fees, the stamps and two crossings to the Indian side.', [
+    {from:'cfo', to:'asy', step:'1.2', why:'files the Bill of Export in ASYCUDA and prints it'},
+    {from:'cfo', to:'india', step:'3.2', why:'border man obtains the Car Pass form from the Indian side'},
+    {from:'india', to:'asy', step:'3.2', why:'Customs stamps the Car Pass for the crossing'},
+    {from:'cfo', to:'gate', step:'2.2', why:'collects the invoice, packing list, EXP form and certificates from the driver'},
+    {from:'wb', to:'cfo', step:'3.3', why:'takes the Weight Report and Car Pass to the office'},
+    {from:'cfo', to:'asy', step:'4.1', why:'presents the printed Bill of Export; inspection arranged'},
+    {from:'asy', to:'yard', step:'4.1', why:'attends the inspection of the goods'},
+    {from:'yard', to:'oga', step:'4.2', why:'sample to the agency; pays the control fee; collects the certificate (when required)'},
+    {from:'oga', to:'asy', step:'4.3', why:'assessment; processing-fee stamps attached; notice printed'},
+    {from:'asy', to:'bank', step:'4.4', why:'pays the export fees at the bank'},
+    {from:'bank', to:'asy', step:'4.5', why:'collects the final Bill of Export'},
+    {from:'asy', to:'india', step:'4.6', why:'border man crosses with the final Bill of Export for the approval notice'},
+    {from:'india', to:'cfo', step:'4.6', why:'brings the approval notice back'},
+    {from:'cfo', to:'bill', step:'5.1', why:'presents the papers at the BLPA billing counter; bill issued'},
+    {from:'bill', to:'bank', step:'5.2', why:'pays the export charges in cash'},
+    {from:'bank', to:'bill', step:'5.2', why:'receipt back to the counter; exit note issued in four copies'},
+    {from:'bill', to:'asy', step:'5.3', why:'Customs signs the exit note at entry'},
+    {from:'asy', to:'exit', step:'6.1', why:'hands the signed exit note to the driver at the exit gate'}
+  ]));
+  const fileT = trav('file', 'The export file: Bill of Export, Car Pass, Weight Report, fee receipts, approval notice, exit note.', [
+    {from:'cfo', to:'asy', step:'1.2', why:'Bill of Export printed and presented'},
+    {from:'wb', to:'cfo', step:'3.3', why:'Weight Report and Car Pass to the office'},
+    {from:'cfo', to:'asy', step:'4.3', why:'declaration with stamps to assessment; notice printed'},
+    {from:'asy', to:'bank', step:'4.4', why:'assessment notice to the bank; receipt issued'},
+    {from:'bank', to:'asy', step:'4.5', why:'receipt back; final Bill of Export printed'},
+    {from:'asy', to:'india', step:'4.6', why:'final Bill of Export and Car Pass copy to Indian Customs'},
+    {from:'india', to:'cfo', step:'4.6', why:'approval notice back to the office'},
+    {from:'cfo', to:'bill', step:'5.1', why:'Weight Report and Customs papers to billing; bill printed'},
+    {from:'bill', to:'bank', step:'5.2', why:'bill to the bank; cash receipt issued'},
+    {from:'bank', to:'bill', step:'5.2', why:'receipt back; exit note in four copies'},
+    {from:'bill', to:'asy', step:'5.3', why:'exit note to Customs for the entry signature'},
+    {from:'asy', to:'exit', step:'6.1', why:'exit note shown at the gate; BLPA and Customs each check their signature'},
+    {from:'exit', to:'cexit', step:'6.1', why:'checked by the Customs operator at the same desk'}
+  ]); fileT.label = 'The export file (papers)'; T.push(fileT);
+  return T;
+}
+function makeSpagX(port, intro, findings){
+  return { intro, width:1560, height:700,
+    zones:[{x:20,y:40,w:230,h:280,label:'INDIAN SIDE'},{x:270,y:40,w:230,h:640,label:'APPROACH AND ZERO POINT'},{x:520,y:40,w:480,h:640,label:'BLPA PORT AREA'},{x:1020,y:40,w:520,h:640,label:'OFFICES: C&F, CUSTOMS, AGENCY, BANK, BLPA BILLING'}],
+    nodes: baseNodesX(port), travellers: baseTravellersX(port), findings,
+    src:'Derived from the AS-IS export steps; SRC-U01 to U22; SRC-MIN-*; SRC-JAN.' };
+}
+TRAV_STYLE.xtruck = {label:'Export truck (Bangladeshi, loaded)', color:'#155b3a', width:3.4};
+SPAGX.ben = makeSpagX('ben', 'One export consignment at Benapole: a loaded Bangladeshi truck, the C&F agent (with the border man) and the export file. The driver stays with the truck. Each line is one move; the number is the order of that traveller\'s moves. Positions are schematic, not to scale.', [
+  'The C&F agent makes eighteen moves for one export truck, including two crossings to the Indian side: once for the Car Pass form and once for the approval notice.',
+  'Export fees of about 150 taka take a visit to the bank and two visits to the Customs desk; collecting them costs more than they raise.',
+  'The exit note is signed by BLPA and by Customs at entry and again at exit, so the paper is walked between the counter, the Customs desk and the gate before the truck can leave.',
+  'The loaded truck itself makes only four moves inside the port: gate, scale, yard, exit; the rest of its time is waiting for the papers.'
+]);
+SPAGX.bho = makeSpagX('bho', 'One export consignment at Bhomra. The flow is the Benapole export flow; a Customs officer sits in the weighbridge room and countersigns the slip on the spot. Positions are schematic.', [
+  'The C&F agent makes eighteen moves for one export truck, including two crossings to the Indian side.',
+  'Export trucks share the single lane with arriving import trucks, so trucks ready to leave are blocked by trucks arriving.'
+]);
+SPAGX.bur = makeSpagX('bur', 'One export consignment at Burimari. The gate, BGB post, C&F desk and Customs sit together at zero point and the bank booth is on site, so the walks are short; the stamps and the two crossings remain. Positions are schematic.', [
+  'The C&F agent makes eighteen moves for one export truck; the bank booth on site shortens two of them.',
+  'The exit note needs a BLPA stamp and a Customs stamp before the gate releases the truck on a visual check.'
+]);
+/* ===================== spaghetti tab: today and after paperless, import and export, plus the movement list ===================== */
+state.spagDir = 'import'; state.spagView = 'asis';
+function renderSpaghetti(){
+  const el = document.getElementById('spaghetti-panel'); const port = state.spagPort, dir = state.spagDir; const sp = spagFor(port, dir);
+  if (!sp) { el.innerHTML = '<div class="card" style="margin-top:8px"><p class="body">No spaghetti for this flow yet.</p></div>'; return; }
+  const after = state.spagView === 'tobe';
+  const ports = Object.entries(PORTS).map(([k,p])=>`<button type="button" aria-pressed="${port===k}" onclick="state.spagPort='${k}';state.trav='all';renderSpaghetti()">${esc(p.name)}</button>`).join('');
+  const dirs = ['import','export'].map(d=>`<button type="button" aria-pressed="${dir===d}" onclick="state.spagDir='${d}';state.trav='all';renderSpaghetti()">${d==='import'?'Import':'Export'}</button>`).join('');
+  const views = [['asis','Today'],['tobe','After paperless']].map(([v,l])=>`<button type="button" aria-pressed="${state.spagView===v}" onclick="state.spagView='${v}';renderSpaghetti()">${l}</button>`).join('');
+  const travBtns = [`<button type="button" aria-pressed="${state.trav==='all'}" onclick="state.trav='all';renderSpaghetti()">All travellers</button>`].concat(sp.travellers.map(t=>`<button type="button" aria-pressed="${state.trav===t.key}" style="${state.trav===t.key?`background:${t.color};border-color:${t.color}`:''}" onclick="state.trav='${t.key}';renderSpaghetti()"><span class="swatch" style="background:${t.color}"></span>${esc(t.label)}</button>`)).join('');
+  const nodeById = Object.fromEntries(sp.nodes.map(n=>[n.id,n]));
+  const asisSteps = resolveSteps('asis', dir, port), tobeSteps = resolveSteps('tobe', dir, port);
+  const stepTime = id => { const s = stepById(asisSteps, id); return s ? timeAsIs(port, dir, s) : {basis:'',level:'',hours:null}; };
+  const RANK = {High:3, Medium:2, Low:1};
+  /* the moves shown: today all of them; after paperless only those that still happen, renumbered per traveller */
+  const shownTrav = sp.travellers.map(t => ({ t, moves: t.moves.map((m, i) => ({ m, i, stays: moveStays(port, dir, m, t.key) })).filter(x => !after || x.stays) }));
+  const visible = shownTrav.filter(x => state.trav==='all' || x.t.key===state.trav);
+  const nodeLevel = {}, nodeHours = {}, nodeSteps = {};
+  sp.travellers.forEach(t => t.moves.forEach(m => { const x = stepTime(m.step); if (x.role === 'carry' && (!nodeLevel[m.to] || RANK[x.level] > RANK[nodeLevel[m.to]])) nodeLevel[m.to] = x.level; (nodeSteps[m.to] = nodeSteps[m.to] || new Set()).add(m.step); }));
+  Object.entries(nodeSteps).forEach(([id, set]) => { nodeHours[id] = [...set].reduce((n, sid) => n + hoursOf(stepTime(sid)), 0); });
+  const afterWord = (m, tkey) => { const succ = tobeSteps.filter(x => x.asis === m.step); if (!succ.length) return 'this move disappears'; if (!moveStays(port, dir, m, tkey)) return 'no longer needed'; const c = timeToBe(port, dir, succ[0]).change; return c==='Same' ? 'as today' : c==='Outside BLPA' ? 'outside BLPA' : c.toLowerCase(); };
+  const moveTime = id => { const s = stepById(asisSteps, id); if (!s) return ''; const chip = timeChip(s, port, dir).replace('class="t', 'class="tag t'); if (chip) return chip; const x = timeAsIs(port, dir, s); if (x.nodata) return '<span class="muted">not timed at this port</span>'; if (x.role === 'within' || x.role === 'moment') return `<span class="muted">inside the time at ${esc(x.part.at)}</span>`; if (x.basis === 'reported') return '<span class="muted">wait reported, not timed</span>'; return '<span class="muted">not timed</span>'; };
+  const W = sp.width || 1500, H = sp.height || 720;
+  const usedNodes = new Set(visible.flatMap(x => x.moves.flatMap(y => [y.m.from, y.m.to])));
+  const nodeSvg = sp.nodes.map(n=>{ const w=n.w||150, h=n.h||46; const fill = n.type==='blpa'?'#e8f4ed':n.type==='cus'?'#eef1f3':n.type==='cf'?'#f1eafe':n.type==='bank'?'#fff4d8':n.type==='ext'?'#f5f7f8':'#fff'; const lv = after ? null : nodeLevel[n.id]; const stroke = lv==='High'?'#b94646':lv==='Medium'?'#b47d13':'#7d8c84'; const dim = after && !usedNodes.has(n.id); return `<g opacity="${dim?0.35:1}"><rect x="${n.x-w/2}" y="${n.y-h/2}" width="${w}" height="${h}" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="${lv?2.2:1.2}"/>${lv?`<g><circle cx="${n.x+w/2-2}" cy="${n.y-h/2+2}" r="8" fill="${stroke}"/><text x="${n.x+w/2-2}" y="${n.y-h/2+5.5}" text-anchor="middle" font-size="9" fill="#fff" font-weight="800">${lv==='High'?'H':'M'}</text><title>${esc('Measured waiting here is rated '+lv)}</title></g>`:''}<foreignObject x="${n.x-w/2}" y="${n.y-h/2}" width="${w}" height="${h}"><div xmlns="http://www.w3.org/1999/xhtml" style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center;font:10.5px/1.2 Segoe UI,Arial,sans-serif;font-weight:800;color:#193426;padding:3px 6px">${esc(n.label)}</div></foreignObject></g>`; }).join('');
+  const pair = {};
+  const edgeSvg = visible.map(x => x.moves.map((y,i)=>{ const m = y.m, t = x.t; const a=nodeById[m.from], b=nodeById[m.to]; if(!a||!b) return ''; const key=[m.from,m.to].sort().join('|'); pair[key]=(pair[key]||0)+1; const k=pair[key]; const dx=b.x-a.x, dy=b.y-a.y, len=Math.max(1,Math.hypot(dx,dy)); const nx=-dy/len, ny=dx/len; const off=(k-1)*16-8; const mx=(a.x+b.x)/2+nx*(off+22), my=(a.y+b.y)/2+ny*(off+22); return `<path d="M${a.x},${a.y} Q${mx},${my} ${b.x},${b.y}" fill="none" stroke="${t.color}" stroke-width="${t.width||2.2}" ${t.dash?`stroke-dasharray="${t.dash}"`:''} marker-end="url(#sp-${t.key})" opacity=".9"/><circle cx="${(a.x+2*mx+b.x)/4}" cy="${(a.y+2*my+b.y)/4}" r="9" fill="${t.color}" stroke="#fff" stroke-width="1.5"/><text x="${(a.x+2*mx+b.x)/4}" y="${(a.y+2*my+b.y)/4+3.5}" text-anchor="middle" font-size="9" font-weight="800" fill="#fff">${i+1}</text>`; }).join('')).join('');
+  const defs = sp.travellers.map(t=>`<marker id="sp-${t.key}" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${t.color}"/></marker>`).join('');
+  const zones = (sp.zones||[]).map(z=>`<rect x="${z.x}" y="${z.y}" width="${z.w}" height="${z.h}" rx="12" fill="#fafcfb" stroke="#dce5df" stroke-dasharray="4 3"/><text x="${z.x+10}" y="${z.y+16}" font-size="10" font-weight="800" fill="#68756d">${esc(z.label)}</text>`).join('');
+  const totalToday = sp.travellers.reduce((n,t)=>n+t.moves.length,0), totalAfter = shownTrav.reduce((n,x)=>n+x.t.moves.filter(m=>moveStays(port,dir,m,x.t.key)).length,0);
+  const banner = `<div class="quant-strip"><span class="q-chip"><b>${totalToday}</b> moves today</span><span class="q-chip chg"><b>${totalAfter}</b> after paperless</span><span class="q-chip"><b>${sp.travellers.length}</b> travellers</span><span class="q-chip"><b>${sp.nodes.length}</b> places</span>${after?'<span class="q-chip filt">showing the moves that still happen after paperless; faded places are no longer visited</span>':''}</div>`;
+  const afterClass = a => (a==='this move disappears'||a==='no longer needed'||a==='removed'||a==='much shorter') ? 'drop' : a==='shorter' ? 'less' : a==='visible' ? 'vis' : 'same';
+  const travTotals = t => { const ids = [...new Set(t.moves.map(m => m.step))]; const A = ids.map(id => stepById(asisSteps, id)).filter(Boolean); const T = tobeSteps.filter(x => x.asis && ids.includes(x.asis)); return timeTotals(port, dir, A, T); };
+  const travBlock = x => {
+    const t = x.t; const r = travTotals(t); const all = t.moves.map((m, i) => ({ m, i, stays: moveStays(port, dir, m, t.key), aw: afterWord(m, t.key) }));
+    const gone = all.filter(y => !y.stays).length, drop = all.filter(y => y.stays && (y.aw==='removed'||y.aw==='much shorter')).length, less = all.filter(y => y.stays && y.aw==='shorter').length;
+    const places = new Set(t.moves.flatMap(m=>[m.from,m.to])).size; const foot = /foot|file/i.test(t.label);
+    const rows = (after ? all.filter(y => y.stays) : all).map((y, k) => `<tr class="${y.stays?'':'gone'}"><td class="n">${k+1}</td><td><b>${esc(nodeById[y.m.from]?.label)}</b><span class="arr">to</span><b>${esc(nodeById[y.m.to]?.label)}</b><div class="why">${esc(y.m.why)}</div></td><td class="st"><button type="button" class="rt-link" onclick="goStep('asis','${dir}','${esc(y.m.step)}','${port}')">${esc(y.m.step)}</button></td><td class="tm">${moveTime(y.m.step)}</td><td class="af"><span class="tag t ${afterClass(y.aw)}">${esc(y.aw==='this move disappears'?'disappears':y.aw)}</span></td></tr>`).join('');
+    const ids = [...new Set(t.moves.map(m => m.step))]; const S = ids.map(id => stepById(asisSteps, id)).filter(Boolean); const docsN = S.reduce((n, q) => n + (q.docs||[]).length, 0), signsN = S.reduce((n, q) => n + (q.signs||[]).length, 0), paperN = S.filter(q => q.manual).length; const docNames = [...new Set(S.flatMap(q => (q.docs||[]).map(d => DOCS[d.doc]?.short || d.doc)))];
+    const srow = (l, v) => `<tr><td class="k">${l}</td><td>${v}</td></tr>`;
+    const summary = `<div class="asum tv-total"><div class="asum-head"><b>Summary for ${esc(t.label)}</b> · ${esc(PORTS[port].name)} · ${esc(dir)}</div><table class="asum-table"><tbody>${srow('Moves today', `<b>${t.moves.length}</b>${foot ? ' on foot' : ''} between <b>${places}</b> places`)}${srow('Moves after paperless', `<b>${t.moves.length - gone}</b>: ${gone} no longer needed, ${drop} removed or much shorter${less ? `, ${less} shorter` : ''}`)}${srow('Steps of the map involved', `<b>${S.length}</b>: ${S.map(q => `<button type="button" class="rt-link" onclick="goStep('asis','${dir}','${esc(q.id)}','${port}')">${esc(q.id)}</button>`).join(' ')}`)}${srow('Paper or manual steps', `<b>${paperN}</b> of ${S.length}`)}${srow('Documents handled', `<b>${docsN}</b>${docNames.length ? ` (${esc(docNames.join(', '))})` : ''}`)}${srow('Signatures and stamps', `<b>${signsN}</b>`)}${srow('Time in these steps today', fmtToday(r))}${srow('After paperless', fmtAfter(r) + (r.today && r.after < r.today ? ` <small>about ${esc(fmtH(r.today - r.after))} less</small>` : ''))}${t.key==='itruck' && port==='ben' && dir==='import' ? srow('Whole stay in the port (measured)', `typically <b>${esc(fmtDur(TIME.parts.stay.typical,false))}</b>; one truck in ten over <b>${esc(fmtDur(TIME.parts.stay.slow,false))}</b>`) : ''}</tbody></table>${fmtCond(r)}</div>`;
+    return `<section class="tv"><h3><span class="swatch" style="background:${t.color}"></span>${esc(t.label)}${after ? ' <small>after paperless</small>' : ''}</h3><p class="tv-desc">${esc(t.desc)}</p>${xwrap(`<table class="tv-table"><thead><tr><th>#</th><th>Move: from, to, and why</th><th>Step</th><th>Time today</th><th>After paperless</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted">No moves left for this traveller after paperless.</td></tr>'}</tbody></table>`, `BLPA_spaghetti_${PORTS[port].name}_${dir}_${t.key}${after?'_after':''}`)}${summary}</section>`;
+  };
+  const lists = visible.map(travBlock).join('');
+  /* arrivals per place */
+  const touches = {}; sp.travellers.forEach(t => t.moves.forEach((m,i) => { if (after && !moveStays(port, dir, m, t.key)) return; (touches[m.to] = touches[m.to] || []).push({t, i, m}); }));
+  const touchRows = sp.nodes.filter(n=>touches[n.id]).map(n => { const list = touches[n.id]; const byT = {}; list.forEach(x => { (byT[x.t.label] = byT[x.t.label] || []).push(`${x.m.why} (step ${x.m.step})`); }); const hrs = nodeHours[n.id] || 0; const lv = nodeLevel[n.id];
+    return `<tr><td class="k">${esc(n.label)}</td><td><b>${list.length}</b></td><td>${hrs ? `<b>about ${esc(fmtH(hrs))}</b>${lv?` <span class="tag t ${levelClass(lv)}">${esc(lv)}</span>`:''}` : '<span class="muted">none carried here</span>'}</td><td>${Object.entries(byT).map(([k,v])=>`<div class="touch-who"><b>${esc(k)}</b>, ${v.length===1?'once':v.length===2?'twice':v.length+' times'}: ${v.map(q=>esc(q)).join('; ')}</div>`).join('')}</td></tr>`; });
+  /* the movement list: every step of the flow, whether it moves anything, and what remains after paperless */
+  const idx = moveIndex(port, dir); const phases = phaseList(dir);
+  const listRows = []; phases.forEach(p => { const ps = asisSteps.filter(s => s.phase === p.key); if (!ps.length) return; listRows.push(`<tr class="rt-group"><td colspan="8"><b>Phase ${p.n} · ${esc(p.label)}</b></td></tr>`);
+    ps.forEach(s => { const list = idx[s.id] || []; const phys = list.filter(x => x.kind !== 'paper'), pap = list.filter(x => x.kind === 'paper'); const stay = phys.filter(x => moveStays(port, dir, x.m, x.t)).length; const succ = tobeSteps.filter(t => t.asis === s.id); const kinds = [...new Set(phys.map(x => x.kind))];
+      listRows.push(`<tr><td class="rt-ph"><span class="sid a">${esc(s.id)}</span><br><small>${esc(actorLabel(s.actor))}</small></td><td>${esc(s.title)}</td><td>${esc(LENS[lensOf(s.actor)]?.label || '')}</td><td>${kinds.length ? kinds.map(k => `<span class="mv ${k==='truck'?'tr':'ft'}">${k === 'truck' ? 'truck moves' : 'on foot'}</span>`).join('') : '<span class="muted">desk, system or waiting</span>'}</td><td>${phys.length ? `<b>${phys.length}</b> ${phys.map(x => esc(sp.travellers.find(t => t.key === x.t)?.label.split(' (')[0] || x.t)).join(', ')}` : ''}${pap.length ? `<div class="cond">${pap.length} paper move${pap.length>1?'s':''}</div>` : ''}</td><td>${phys.length ? `<b>${stay}</b>${stay < phys.length ? ` <small>(${phys.length - stay} no longer needed)</small>` : ''}` : ''}</td><td>${moveTime(s.id)}</td><td>${succ.length ? succ.map(t => `${stepLink('tobe', dir, t.id)} ${esc(t.change ? (CHANGE_TYPES[t.change.type]?.label || t.change.type) : 'as today')}`).join('; ') : '<span class="tag t drop">step removed</span>'}</td></tr>`); }); });
+  const listTable = `<div class="table-wrap retable compact movelist"><table><thead><tr><th>Step and actor</th><th>What happens</th><th>Group</th><th>Movement</th><th>Physical moves today</th><th>After paperless</th><th>Time today</th><th>Paperless step</th></tr></thead><tbody>${listRows.join('')}</tbody></table></div>`;
+  const mv = moveTotals(port, dir, asisSteps);
+  const timeBullet = (() => { const ids = [...new Set(sp.travellers.flatMap(t => t.moves.map(m => m.step)))]; const r = timeTotals(port, dir, ids.map(id => stepById(asisSteps, id)).filter(Boolean), tobeSteps.filter(x => x.asis && ids.includes(x.asis))); return `<li><b>Time:</b> the steps behind these moves carry ${fmtToday(r)} today and ${fmtAfter(r)} after paperless${port==='ben' && dir==='import' ? `; an Indian truck typically stays ${esc(fmtDur(TIME.parts.stay.typical))} from gate in to gate out` : ' (no truck data for this flow yet: only the assumed steps are counted)'}. After paperless, ${totalToday - totalAfter} of the ${totalToday} moves are no longer needed.</li>`; })();
+  el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Spaghetti: who walks where for one ${esc(dir)} consignment</h2><p class="body">${esc(sp.intro)}</p><div class="toolbar"><div class="grp"><b>Port</b><span class="seg">${ports}</span></div><div class="grp"><b>Direction</b><span class="seg">${dirs}</span></div><div class="grp"><b>View</b><span class="seg">${views}</span></div><div class="grp"><b>Traveller</b><span class="trav">${travBtns}</span></div><span class="hint">Numbers on the lines are the order of moves for that traveller. Each traveller's table lists its moves with the step, the time carried at that step today and what happens to the move after paperless. A red H or orange M on a place marks a measured wait rated High or Medium.</span></div>${banner}
+  <div class="spag-layout single"><div><svg class="spag-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"><defs>${defs}</defs><rect width="${W}" height="${H}" fill="#fff"/>${zones}${edgeSvg}${nodeSvg}</svg></div><div class="spag-panel">${lists}</div></div>
+  <h3>Arrivals per place${after ? ' after paperless' : ''}, and why each one happens</h3><p>Each row is a place. The count is how many times someone or something arrives there for one consignment; the time is the sum of the figures carried by the steps that arrive there (each step counted once).</p>${xtable(['Place','Arrivals','Time carried here today','Who arrives, how often, and why'], touchRows, 900, `BLPA_spaghetti_places_${PORTS[port].name}_${dir}${after?'_after':''}`)}${TIME_CAVEAT()}
+  ${sp.findings?`<h3>What the picture says</h3><ul>${sp.findings.map(f=>`<li>${esc(f)}</li>`).join('')}${timeBullet}</ul>`:''}</div>
+  <div class="card"><h2>Movements against the steps of the map · ${esc(PORTS[port].name)} · ${esc(dir)}</h2><p class="body">The map has ${asisSteps.length} steps today; ${mv.stepsWithMove} of them involve a physical move (a truck driving or a person walking) and the rest are desk work, system work or waiting. The moves come from the spaghetti above, so the two views always agree. After paperless ${mv.after} of the ${mv.moves} physical moves remain; a move stays when the truck still has to be there, or when the paperless step is still a paper step.</p>${xwrap(listTable, `BLPA_movements_${PORTS[port].name}_${dir}`)}</div>`;
+  linkSteps(el.querySelector('.spag-panel'), 'asis', port, dir);
+}
 /* ===================== RULES: what forces paper, and the change needed ===================== */
 const RULES = [
  {id:'R-01', type:'Legal', today:'The Car Pass is a paper vehicle permit carried across the border by hand and stamped by Customs on both sides; BLPA copies it by hand.', why:'Customs rules for foreign vehicles; practice on both sides of the border.', change:'NBR recognises a digital Car Pass or vehicle pre-arrival record, ideally exchanged electronically with the Indian side. Until then the paper document remains, but BLPA no longer depends on it.', owner:'NBR, with the Indian side', enables:'Truck identified by plate at the gate; foreign-truck exit closed from a Customs status.', priority:'Blocking', src:'SRC-EXT-SOP23 p.57, p.177, p.226; SRC-EXT-BPA22 p.18; SRC-U19'},
@@ -2512,9 +2668,11 @@ const OVERVIEW_HTML = `
 <tr><td class="k">BGB</td><td>Border Guard Bangladesh, the border security force.</td></tr>
 </tbody></table></div></div>`;
 /* ===================== re-engineering: today beside paperless, one card per step ===================== */
-state.tbl = { port:'ben', dir:'import', phase:'all', actor:'all', change:'all', time:'all', only:'all', q:'', open:{}, allOpen:false, mode:'table' };
-function tblReset(){ Object.assign(state.tbl, { phase:'all', actor:'all', change:'all', time:'all', only:'all', q:'' }); renderTable(); }
-function tblSet(k, v){ state.tbl[k] = v; if (k==='port' || k==='dir') { state.tbl.phase='all'; state.tbl.actor='all'; state.tbl.open={}; } renderTable(); }
+state.tbl = { port:'ben', dir:'import', route:'all', phase:'all', actor:'all', change:'all', time:'all', only:'all', q:'', open:{}, allOpen:false, mode:'table' };
+function tblReset(){ Object.assign(state.tbl, { phase:'all', actor:'all', route:'all', change:'all', time:'all', only:'all', q:'' }); renderTable(); }
+function tblSet(k, v){ state.tbl[k] = v; if (k==='port' || k==='dir') { state.tbl.phase='all'; state.tbl.actor='all'; state.tbl.open={}; if (k==='dir' && v !== 'import') state.tbl.route = 'all'; if (k==='port' && v === 'ben' && state.tbl.route === 'stone') state.tbl.route = 'all'; } renderTable(); }
+function tblActorSet(key){ return key === 'all' ? null : key.startsWith('g:') ? new Set(lensActors(key.slice(2))) : new Set([key]); }
+function tblActorLabel(key){ return key === 'all' ? 'all actors' : key.startsWith('g:') ? LENS[key.slice(2)].label : actorLabel(key); }
 function tblToggle(key){ state.tbl.open[key] = !state.tbl.open[key]; const d = document.getElementById('rtd-'+key); const b = document.getElementById('rtb-'+key); if (d) d.hidden = !state.tbl.open[key]; if (b) b.textContent = state.tbl.open[key] ? 'Hide detail' : 'Full detail'; }
 function tblOpenAll(on){ state.tbl.allOpen = on; document.querySelectorAll('#table-panel .rt-detail').forEach(d => { d.hidden = !on; state.tbl.open[d.dataset.key] = on; }); document.querySelectorAll('#table-panel button.rt-exp').forEach(b => b.textContent = on ? 'Hide detail' : 'Full detail'); }
 function tblOpenStep(view, id){ state.port = state.tbl.port; state.dir = state.tbl.dir; ['asis','tobe'].forEach(v => { const p = document.getElementById(`${v}-panel`); if (p.hidden) p.dataset.stale='1'; }); openStep(view, id); }
@@ -2610,17 +2768,16 @@ function cardHtml(r, port, dir, A, T, phases, key, open){
 }
 function groupStats(rs, port, dir, actorKey){
   const A = rs.filter(r => r.a).map(r => r.a), T = rs.filter(r => r.t).map(r => r.t); const ids = new Set(A.map(s => s.id));
-  const TRAV = { cf: ['cf'], drv: ['itruck', 'driver', 'ltruck'] }; const travKeys = actorKey === 'all' ? null : (TRAV[actorKey] || []); const sp = SPAG[port];
-  let moves = 0; const places = new Set(); if (sp && dir === 'import') sp.travellers.forEach(tr => { if (travKeys && !travKeys.includes(tr.key)) return; tr.moves.forEach(m => { if (ids.has(m.step)) { moves++; places.add(m.from); places.add(m.to); } }); });
+  const lensKey = actorKey === 'all' ? 'all' : actorKey.startsWith('g:') ? actorKey.slice(2) : lensOf(actorKey); const mv = moveTotals(port, dir, A, lensKey); const moves = mv.moves; const places = new Set(); const sp = spagFor(port, dir); if (sp) sp.travellers.forEach(tr => { if (lensKey !== 'all' && TRAV_LENS[tr.key] !== lensKey) return; tr.moves.forEach(m => { if (ids.has(m.step)) { places.add(m.from); places.add(m.to); } }); });
   const tm = timeTotals(port, dir, A, T); const waits = { High: 0, Medium: 0 }; A.forEach(s => { const x = timeAsIs(port, dir, s); if (x.role === 'carry' && (x.level === 'High' || x.level === 'Medium')) waits[x.level]++; });
   const after = { Removed: 0, 'Much shorter': 0, Shorter: 0 }; T.forEach(s => { const ch = timeToBe(port, dir, s).change; if (after[ch] !== undefined) after[ch]++; }); after.Removed += rs.filter(r => r.kind === 'removed').length;
   const sum = (arr, f) => arr.reduce((n, s) => n + f(s), 0);
-  return { n: rs.length, stepsA: A.length, stepsT: T.length, paperA: A.filter(s => s.manual).length, paperT: T.filter(s => s.manual).length, docsA: sum(A, s => (s.docs||[]).length), docsT: sum(T, s => (s.docs||[]).length), signsA: sum(A, s => (s.signs||[]).length), signsT: sum(T, s => (s.signs||[]).length), moves, places: places.size, hasMoves: !!(sp && dir === 'import' && (actorKey === 'all' || (travKeys && travKeys.length))), tm, waits, after, rules: new Set(T.flatMap(s => s.change && s.change.rule ? s.change.rule.split(',').map(x => x.trim()) : [])).size };
+  return { n: rs.length, stepsA: A.length, stepsT: T.length, paperA: A.filter(s => s.manual).length, paperT: T.filter(s => s.manual).length, docsA: sum(A, s => (s.docs||[]).length), docsT: sum(T, s => (s.docs||[]).length), signsA: sum(A, s => (s.signs||[]).length), signsT: sum(T, s => (s.signs||[]).length), moves, places: places.size, hasMoves: !!(sp && moves), mvAfter: mv.after, tm, waits, after, rules: new Set(T.flatMap(s => s.change && s.change.rule ? s.change.rule.split(',').map(x => x.trim()) : [])).size };
 }
 function subtotalRow(label, g, cls){
   const kinds = [g.after.Removed ? `${g.after.Removed} removed` : '', g.after['Much shorter'] ? `${g.after['Much shorter']} much shorter` : '', g.after.Shorter ? `${g.after.Shorter} shorter` : ''].filter(Boolean).join(', ');
   const saved = g.tm.today && g.tm.after < g.tm.today ? `<div class="rt-saved">about ${esc(fmtH(g.tm.today - g.tm.after))} less</div>` : '';
-  return `<tr class="rt-sub ${cls||''}"><td class="k">${esc(label)}</td><td>${g.stepsA} step${g.stepsA===1?'':'s'}${g.hasMoves ? `; ${g.moves} move${g.moves===1?'':'s'} between ${g.places} places` : ''}</td><td>${g.paperA} paper, ${g.stepsA - g.paperA} digital; ${g.docsA} document${g.docsA===1?'':'s'}, ${g.signsA} signature${g.signsA===1?'':'s'}</td><td>${fmtToday(g.tm)}${fmtCond(g.tm)}</td><td>${g.stepsT} step${g.stepsT===1?'':'s'}${kinds ? `; ${esc(kinds)}` : ''}</td><td>${g.paperT} paper, ${g.stepsT - g.paperT} digital; ${g.docsT} document${g.docsT===1?'':'s'}, ${g.signsT} signature${g.signsT===1?'':'s'}</td><td>${fmtAfter(g.tm)}${saved}</td><td>${g.rules} rule${g.rules===1?'':'s'} to change</td></tr>`;
+  return `<tr class="rt-sub ${cls||''}"><td class="k">${esc(label)}</td><td>${g.stepsA} step${g.stepsA===1?'':'s'}${g.hasMoves ? `; ${g.moves} physical move${g.moves===1?'':'s'} between ${g.places} places` : ''}</td><td>${g.paperA} paper, ${g.stepsA - g.paperA} digital; ${g.docsA} document${g.docsA===1?'':'s'}, ${g.signsA} signature${g.signsA===1?'':'s'}</td><td>${fmtToday(g.tm)}${fmtCond(g.tm)}</td><td>${g.stepsT} step${g.stepsT===1?'':'s'}${g.hasMoves ? `; ${g.mvAfter} physical move${g.mvAfter===1?'':'s'}` : ''}${kinds ? `; ${esc(kinds)}` : ''}</td><td>${g.paperT} paper, ${g.stepsT - g.paperT} digital; ${g.docsT} document${g.docsT===1?'':'s'}, ${g.signsT} signature${g.signsT===1?'':'s'}</td><td>${fmtAfter(g.tm)}${saved}</td><td>${g.rules} rule${g.rules===1?'':'s'} to change</td></tr>`;
 }
 function timeCellA(t){
   if (t.nodata) return `<span class="muted">not timed at this port${t.role === 'carry' ? ' (measured at Benapole only)' : ''}</span>`;
@@ -2654,14 +2811,14 @@ function groupedTable(vis, port, dir, phases, actorKey){
   phases.forEach(p => { const rs = vis.filter(r => (r.t||r.a).phase === p.key); if (!rs.length) return; any = true;
     rowsHtml.push(`<tr class="rt-group"><td colspan="8"><b>Phase ${p.n} · ${esc(p.label)}</b> <span class="muted">${esc(p.desc)}</span></td></tr>`);
     rs.forEach(r => rowsHtml.push(tableRowHtml(r, port, dir, phases, `${port}-${dir}-${r.a?r.a.id:'x'}-${r.t?r.t.id:'x'}`.replace(/\./g,'_'))));
-    rowsHtml.push(subtotalRow(`Subtotal, phase ${p.n}${actorKey!=='all'?' for '+actorLabel(actorKey):''}`, groupStats(rs, port, dir, actorKey))); });
-  if (any) rowsHtml.push(subtotalRow(`Total${actorKey!=='all'?' for '+actorLabel(actorKey):''}, ${esc(PORTS[port].name)} ${esc(dir)}`, groupStats(vis, port, dir, actorKey), 'total'));
+    rowsHtml.push(subtotalRow(`Subtotal, phase ${p.n}${actorKey!=='all'?' for '+tblActorLabel(actorKey):''}`, groupStats(rs, port, dir, actorKey))); });
+  if (any) rowsHtml.push(subtotalRow(`Total${actorKey!=='all'?' for '+tblActorLabel(actorKey):''}, ${esc(PORTS[port].name)} ${esc(dir)}`, groupStats(vis, port, dir, actorKey), 'total'));
   return `<div class="table-wrap retable compact"><table><thead><tr><th>Step and actor</th><th>Today: what happens</th><th>Today: paper or digital</th><th>Time today (typical)</th><th>Re-engineered step</th><th>After: paper or digital</th><th>Time after (assumed)</th><th>Policy or rule needed</th></tr></thead><tbody>${any ? rowsHtml.join('') : '<tr><td colspan="8" class="muted">No steps match these filters.</td></tr>'}</tbody></table></div>`;
 }
 function tblVisible(){
   const S = state.tbl; const port = S.port, dir = S.dir; const rows = pairRows(port, dir); const q = S.q.trim().toLowerCase();
   const vis = rows.filter(r => { const s = r.t || r.a; const ta = r.a ? timeAsIs(port,dir,r.a) : {basis:''}; const ct = r.kind==='removed' ? 'Removed' : (r.t.change ? r.t.change.type : 'none');
-    if (S.phase!=='all' && s.phase!==S.phase) return false; if (S.actor!=='all' && s.actor!==S.actor) return false; if (S.change!=='all' && ct!==S.change) return false;
+    const aset = tblActorSet(S.actor); if (S.phase!=='all' && s.phase!==S.phase) return false; if (aset && !aset.has(s.actor)) return false; if (S.route !== 'all' && !((r.a && inRoute('asis', dir, r.a, S.route)) || (r.t && inRoute('tobe', dir, r.t, S.route)))) return false; if (S.change!=='all' && ct!==S.change) return false;
     if (S.time==='measured' && ta.role!=='carry') return false; if (S.time==='assumed' && ta.basis!=='assumed') return false; if (S.time==='any' && !(ta.hours != null)) return false; if (S.only==='changes' && r.kind==='same') return false;
     if (q) { const hay = [r.a?.id, r.t?.id, r.a?.title, r.t?.title, r.a?.what, r.t?.what, r.t?.change?.what, r.t?.change?.rule, r.t?.change?.owner, actorLabel(s.actor)].join(' ').toLowerCase(); if (!hay.includes(q)) return false; }
     return true; });
@@ -2677,18 +2834,21 @@ function renderTable(){
     const portRows = Object.keys(PORTS).map(pk => { const ci = tblCounts(pk,'import'), ce = tblCounts(pk,'export'); const kinds = x => ['Legal','Policy','Agreement','Integration','Internal'].map(k=>x.byType[k]?`${x.byType[k]} ${k.toLowerCase()}`:'').filter(Boolean).join(', ');
       return `<tr class="${pk===port?'on':''}"><td class="k">${esc(PORTS[pk].name)}</td><td><b>${ci.asis} → ${ci.tobe}</b></td><td>${ci.removed} removed · ${ci.added} new · ${ci.changed} change</td><td>${ci.manualA} → ${ci.manualT}</td><td>${ci.signsA} → ${ci.signsT}</td><td>${ci.hot} → ${ci.drop}</td><td>${esc(kinds(ci))}</td><td><b>${ce.asis} → ${ce.tobe}</b></td><td>${ce.removed} removed · ${ce.added} new · ${ce.changed} change</td><td>${ce.manualA} → ${ce.manualT}</td><td>${ce.signsA} → ${ce.signsT}</td></tr>`; });
     const toolbar = `<div class="toolbar"><div class="grp"><b>Port</b>${seg('port', Object.entries(PORTS).map(([k,p])=>[k,p.name]))}</div><div class="grp"><b>Direction</b>${seg('dir', [['import','Import'],['export','Export']])}</div><div class="grp"><b>Show</b>${seg('only', [['all','All steps'],['changes','Only what changes']])}</div><div class="grp"><b>View</b>${seg('mode', [['table','Compact table'],['cards','Before and after cards']])}</div>
-      <div class="grp"><b>Actor</b><select onchange="tblSet('actor', this.value)"><option value="all">all actors</option>${actors.map(a=>`<option value="${a}" ${S.actor===a?'selected':''}>${esc(actorLabel(a))}</option>`).join('')}</select></div>
+      <div class="grp"><b>Lens</b>${seg('actor', [['all','All']].concat(LENS_MAIN.map(k => ['g:'+k, LENS[k].label])))}</div>
+      <div class="grp"><b>Actor or group</b><select onchange="tblSet('actor', this.value)"><option value="all">all actors</option><optgroup label="Groups">${LENS_ORDER.map(k=>`<option value="g:${k}" ${S.actor==='g:'+k?'selected':''}>${esc(LENS[k].label)}</option>`).join('')}</optgroup><optgroup label="Actors">${actors.map(a=>`<option value="${a}" ${S.actor===a?'selected':''}>${esc(actorLabel(a))}</option>`).join('')}</optgroup></select></div>
+      ${dir==='import' ? `<div class="grp"><b>Route</b>${seg('route', Object.keys(ROUTES).filter(k => k !== 'stone' || port !== 'ben').map(k => [k, ROUTES[k] === 'All routes' ? 'All' : ROUTES[k].replace(' route','')]))}</div>` : ''}
       <div class="grp"><button type="button" class="rt-btn" onclick="tblOpenAll(true)">Expand all</button><button type="button" class="rt-btn" onclick="tblOpenAll(false)">Collapse all</button><button type="button" class="rt-btn" onclick="tblCsv()">Download CSV (rows shown, with subtotals)</button></div></div>`;
-    const active = [S.phase!=='all'?`phase ${phases.find(p=>p.key===S.phase)?.n}`:'', S.only==='changes'?'only what changes':'', S.actor!=='all'?`actor: ${actorLabel(S.actor)}`:''].filter(Boolean);
+    const active = [S.phase!=='all'?`phase ${phases.find(p=>p.key===S.phase)?.n}`:'', S.only==='changes'?'only what changes':'', S.actor!=='all'?`${S.actor.startsWith('g:')?'group':'actor'}: ${tblActorLabel(S.actor)}`:'', S.route!=='all'?ROUTES[S.route].toLowerCase():''].filter(Boolean);
     const strip = `<div class="quant-strip"><span class="q-chip">showing <b>${vis.length}</b> of ${rows.length} rows</span>${active.length?`<span class="q-chip filt">filtered by ${esc(active.join(', '))} <button type="button" class="rt-link" onclick="tblReset()">show all ${rows.length}</button></span>`:''}<span class="q-chip">steps today <b>${c.asis}</b></span><span class="q-chip chg">paperless <b>${c.tobe}</b></span><span class="q-chip hot">removed <b>${c.removed}</b></span><span class="q-chip chg">new <b>${c.added}</b></span><span class="q-chip chg">change <b>${c.changed}</b></span><span class="q-chip">as today <b>${c.same}</b></span></div>`;
-    let body;
+    let body = '';
     if (S.mode === 'table') body = (S.actor !== 'all' ? actorSummaryHtml('asis', port, dir, S.actor) : '') + groupedTable(vis, port, dir, phases, S.actor);
-    else body = `<div class="rc-list">${vis.map(r => { const key = `${port}-${dir}-${r.a?r.a.id:'x'}-${r.t?r.t.id:'x'}`.replace(/\./g,'_'); return cardHtml(r, port, dir, A, T, phases, key, S.allOpen || S.open[key]); }).join('') || '<p class="muted">No steps match these filters.</p>'}</div>`;
+    else if (S.actor !== 'all') body = actorSummaryHtml('asis', port, dir, S.actor);
+    if (S.mode !== 'table') body += `<div class="rc-list">${vis.map(r => { const key = `${port}-${dir}-${r.a?r.a.id:'x'}-${r.t?r.t.id:'x'}`.replace(/\./g,'_'); return cardHtml(r, port, dir, A, T, phases, key, S.allOpen || S.open[key]); }).join('') || '<p class="muted">No steps match these filters.</p>'}</div>`;
     const phaseChips = `<div class="grp phases"><b>Phase</b><button type="button" class="ph-chip ${S.phase==='all'?'on':''}" onclick="tblSet('phase','all')">All</button>${phases.map(p => { const n = rows.filter(r => (r.t||r.a).phase === p.key).length; return `<button type="button" class="ph-chip ${S.phase===p.key?'on':''}" onclick="tblSet('phase', state.tbl.phase==='${p.key}'?'all':'${p.key}')" title="${esc(p.desc)}">${p.n} ${esc(p.label)} <small>${n}</small></button>`; }).join('')}</div>`;
     el.innerHTML = `<div class="card" style="margin-top:8px"><h2>Re-engineering: every step today beside its paperless step · ${esc(PORTS[port].name)} · ${esc(dir)}</h2>
       <div class="note-draft"><b>Work in progress.</b> The paperless side is a proposal for discussion and validation, not a final design. Comments are welcome on every step.</div>
       ${toolbar.slice(0, -6) + phaseChips + '</div>'}${strip}${body}</div>
-      <div class="card"><h2>Summary${S.actor!=='all'?` for ${esc(actorLabel(S.actor))}`:''}: what the paperless process changes${vis.length<rows.length?` (the ${vis.length} steps shown)`:''}</h2>
+      <div class="card"><h2>Summary${S.actor!=='all'?` for ${esc(tblActorLabel(S.actor))}`:''}${S.route!=='all'?` · ${esc(ROUTES[S.route].toLowerCase())}`:''}: what the paperless process changes${vis.length<rows.length?` (the ${vis.length} steps shown)`:''}</h2>
       <p class="body">One row per step, grouped by stage: today on the left, the re-engineered step on the right, and the policy or rule it needs. Each stage ends with a subtotal and the table ends with a total; when an actor is chosen, the subtotals are for that actor alone. Click a row for the full detail of both steps. The time columns show a figure only where one exists: measured spans on the step where the time is spent, assumed figures elsewhere.</p>
       ${scoreboard(c, port, dir)}${journeyStrip(port, dir, rows, phases)}${TIME_CAVEAT()}
       <h3 style="margin-top:22px">All ports at a glance</h3>${table(['Port','Import steps','Import: what happens to them','Paper steps','Signatures','High waits → waits removed or much shorter','Changes needed','Export steps','Export: what happens to them','Paper steps','Signatures'], portRows, 1100)}
@@ -2702,14 +2862,14 @@ function tblCsv(){
   try {
     const { rows, vis } = tblVisible(); const actorKey = S.actor; const num = h => h == null ? '' : Math.round(h * 100) / 100;
     const basisA = t => t.role === 'carry' ? t.basis : t.role === 'start' ? 'measured start' : (t.role === 'within' || t.role === 'moment') ? `inside the span carried at ${t.part.at}` : t.basis || '';
-    const head = ['Row type','Port','Direction','Phase no','Phase','Actor','AS-IS step','TO-BE step','Kind of row','Today: title','Today: what happens','Today: paper step','Today: documents handled','Today: signatures','Today: system record','Today: time (hours)','Today: time basis','Today: counted in totals','Today: time note','Paperless: title','Paperless: what happens','Paperless: paper step','Paperless: system record','Kind of change','What changes','Rule to change','Who decides','Expected change','After: time (hours, assumed)','After: how the figure is set','Status'];
+    const head = ['Row type','Port','Direction','Route','Phase no','Phase','Actor','Group','AS-IS step','TO-BE step','Kind of row','Today: title','Today: what happens','Today: paper step','Today: documents handled','Today: signatures','Today: system record','Today: time (hours)','Today: time basis','Today: counted in totals','Today: time note','Paperless: title','Paperless: what happens','Paperless: paper step','Paperless: system record','Kind of change','What changes','Rule to change','Who decides','Expected change','After: time (hours, assumed)','After: how the figure is set','Status'];
     const lines = [head];
     const stepRow = r => { const s = r.t || r.a; const ph = phases.find(p=>p.key===s.phase); const ta = r.a ? timeAsIs(port,dir,r.a) : null; const tt = r.t ? timeToBe(port,dir,r.t) : null;
-      return ['step', PORTS[port].name, dir, ph?ph.n:'', ph?ph.label:'', actorLabel(s.actor), r.a?.id||'', r.t?.id||'', r.kind, r.a?.title||'', r.a?.what||'', r.a?(r.a.manual?'yes':'no'):'', (r.a?.docs||[]).map(d=>`${DOCS[d.doc]?.name||d.doc}: ${d.action}`).join('; '), (r.a?.signs||[]).map(x=>`${x.by} ${x.type||'signs'} the ${DOCS[x.on]?.name||x.on}`).join('; '), r.a?.sys?`${r.a.sys.module}: ${r.a.sys.record}`:'', ta?num(ta.hours):'', ta?basisA(ta):'', ta?(ta.hours!=null?(hoursOf(ta)?'yes':'no'):''):'', ta?(ta.note||ta.why||''):'', r.t?.title||'', r.t?.what||'', r.t?(r.t.manual?'yes':'no'):'', r.t?.sys?`${r.t.sys.module}: ${r.t.sys.record}`:'', r.kind==='removed'?'Step removed':(r.t?.change?.type||'As today'), r.t?.change?.what||'', r.t?.change?.rule||'', r.t?.change?.owner||'', r.kind==='removed'?'Removed':(tt?.change||''), r.kind==='removed'?0:(tt?num(tt.hours):''), tt?tt.how:'', r.t?.status||'']; };
-    const sumRow = (type, label, rs) => { const g = groupStats(rs, port, dir, actorKey); const ph = rs.length ? phases.find(p=>p.key===(rs[0].t||rs[0].a).phase) : null; const row = new Array(head.length).fill(''); row[0] = type; row[1] = PORTS[port].name; row[2] = dir; if (type === 'subtotal' && ph) { row[3] = ph.n; row[4] = ph.label; } row[5] = actorKey === 'all' ? 'all actors' : actorLabel(actorKey); row[9] = label; row[10] = `${g.stepsA} steps today; ${g.paperA} paper; ${g.docsA} documents; ${g.signsA} signatures${g.hasMoves?`; ${g.moves} moves between ${g.places} places`:''}`; row[15] = num(g.tm.today); row[16] = `${num(g.tm.measured + g.tm.indicative)} measured + ${num(g.tm.assumed)} assumed`; row[18] = g.tm.cond.length ? 'not counted: ' + g.tm.cond.map(c => `${c.id} ${num(c.hours)} h when it applies`).join('; ') : ''; row[19] = `${g.stepsT} steps after; ${g.paperT} paper; ${g.docsT} documents; ${g.signsT} signatures`; row[28] = num(g.tm.after); row[29] = 'assumed'; return row; };
+      return ['step', PORTS[port].name, dir, routeOf(r.a ? 'asis' : 'tobe', dir, r.a || r.t), ph?ph.n:'', ph?ph.label:'', actorLabel(s.actor), LENS[lensOf(s.actor)]?.label || '', r.a?.id||'', r.t?.id||'', r.kind, r.a?.title||'', r.a?.what||'', r.a?(r.a.manual?'yes':'no'):'', (r.a?.docs||[]).map(d=>`${DOCS[d.doc]?.name||d.doc}: ${d.action}`).join('; '), (r.a?.signs||[]).map(x=>`${x.by} ${x.type||'signs'} the ${DOCS[x.on]?.name||x.on}`).join('; '), r.a?.sys?`${r.a.sys.module}: ${r.a.sys.record}`:'', ta?num(ta.hours):'', ta?basisA(ta):'', ta?(ta.hours!=null?(hoursOf(ta)?'yes':'no'):''):'', ta?(ta.note||ta.why||''):'', r.t?.title||'', r.t?.what||'', r.t?(r.t.manual?'yes':'no'):'', r.t?.sys?`${r.t.sys.module}: ${r.t.sys.record}`:'', r.kind==='removed'?'Step removed':(r.t?.change?.type||'As today'), r.t?.change?.what||'', r.t?.change?.rule||'', r.t?.change?.owner||'', r.kind==='removed'?'Removed':(tt?.change||''), r.kind==='removed'?0:(tt?num(tt.hours):''), tt?tt.how:'', r.t?.status||'']; };
+    const sumRow = (type, label, rs) => { const g = groupStats(rs, port, dir, actorKey); const ph = rs.length ? phases.find(p=>p.key===(rs[0].t||rs[0].a).phase) : null; const row = new Array(head.length).fill(''); row[0] = type; row[1] = PORTS[port].name; row[2] = dir; row[3] = S.route; if (type === 'subtotal' && ph) { row[4] = ph.n; row[5] = ph.label; } row[6] = tblActorLabel(actorKey); row[11] = label; row[12] = `${g.stepsA} steps today; ${g.paperA} paper; ${g.docsA} documents; ${g.signsA} signatures${g.hasMoves?`; ${g.moves} moves between ${g.places} places`:''}`; row[17] = num(g.tm.today); row[18] = `${num(g.tm.measured + g.tm.indicative)} measured + ${num(g.tm.assumed)} assumed`; row[20] = g.tm.cond.length ? 'not counted: ' + g.tm.cond.map(c => `${c.id} ${num(c.hours)} h when it applies`).join('; ') : ''; row[21] = `${g.stepsT} steps after; ${g.paperT} paper; ${g.docsT} documents; ${g.signsT} signatures; ${g.mvAfter} physical moves`; row[30] = num(g.tm.after); row[31] = 'assumed'; return row; };
     phases.forEach(p => { const rs = vis.filter(r => (r.t||r.a).phase === p.key); if (!rs.length) return; rs.forEach(r => lines.push(stepRow(r))); lines.push(sumRow('subtotal', `Subtotal, phase ${p.n} ${p.label}`, rs)); });
     if (vis.length) lines.push(sumRow('total', `Total, ${PORTS[port].name} ${dir}${actorKey!=='all'?' for '+actorLabel(actorKey):''}`, vis));
-    const filt = [S.phase!=='all'?'phase'+(phases.find(p=>p.key===S.phase)?.n||''):'', S.actor!=='all'?actorLabel(S.actor).replace(/[^a-z0-9]+/gi,'_'):'', S.only==='changes'?'changes':'', S.change!=='all'?S.change:'', S.time!=='all'?'time_'+S.time:''].filter(Boolean).join('_');
+    const filt = [S.phase!=='all'?'phase'+(phases.find(p=>p.key===S.phase)?.n||''):'', S.actor!=='all'?tblActorLabel(S.actor).replace(/[^a-z0-9]+/gi,'_'):'', S.route!=='all'?S.route:'', S.only==='changes'?'changes':'', S.change!=='all'?S.change:'', S.time!=='all'?'time_'+S.time:''].filter(Boolean).join('_');
     csvDownload(`BLPA_reengineering_${PORTS[port].name}_${dir}${filt?'_'+filt:''}.csv`, lines);
   } finally { state.port = keep.port; state.dir = keep.dir; }
 }
@@ -2802,6 +2962,26 @@ function savingChart(){
   const all = timeTotals('ben', 'import', A, T); rows.push({ label: 'All phases together', bars: [{ v: all.today, color: CH.a, text: `today about ${fmtShort(all.today)}` }, { v: all.after, color: CH.after, text: `after paperless about ${fmtShort(all.after)}: about ${fmtShort(all.today - all.after)} less` }] });
   return chartHBars(rows, { aria: 'Time today and after paperless by phase', labW: 340, w: chartW().W });
 }
+/* steps, paper, moves and time by actor group, today against after paperless */
+function groupChart(port, dir){
+  const rows = LENS_ORDER.map(k => { const x = actorStats('asis', port, dir, 'g:' + k), y = actorStats('tobe', port, dir, 'g:' + k); if (!x.steps && !y.steps) return null;
+    return { label: LENS[k].label, sub: LENS[k].sub.length > 44 ? LENS[k].sub.slice(0, 42) + '…' : LENS[k].sub, bars: [{ v: x.steps, color: CH.a, text: `${x.steps} steps today: ${x.paper} on paper, ${x.docs} documents, ${x.signs} signatures${x.hasSpag ? `, ${x.moves} physical moves` : ''}` }, { v: y.steps, color: CH.after, text: `${y.steps} steps after: ${y.paper} on paper, ${y.docs} documents, ${y.signs} signatures${x.hasSpag ? `, ${x.movesAfter} physical moves` : ''}` }] }; }).filter(Boolean);
+  const all = actorStats('asis', port, dir, 'all'), allT = actorStats('tobe', port, dir, 'all');
+  rows.push({ label: 'All groups', bars: [{ v: all.steps, color: CH.a, text: `${all.steps} steps today: ${all.paper} on paper, ${all.docs} documents, ${all.signs} signatures, ${all.moves} physical moves` }, { v: allT.steps, color: CH.after, text: `${allT.steps} steps after: ${allT.paper} on paper, ${allT.docs} documents, ${allT.signs} signatures, ${all.movesAfter} physical moves` }] });
+  return chartHBars(rows, { aria: 'Steps by actor group, today and after paperless', labW: 300, w: chartW().W, padR: 520 });
+}
+function groupTimeChart(port, dir){
+  const rows = LENS_ORDER.map(k => { const x = actorStats('asis', port, dir, 'g:' + k); if (!x.tm.today && !x.tm.after) return null; return { label: LENS[k].label, bars: [{ v: x.tm.today, color: CH.a, text: `today about ${fmtShort(x.tm.today)}${x.tm.measured ? ` (${fmtShort(x.tm.measured)} measured)` : ' (assumed)'}` }, { v: x.tm.after, color: CH.after, text: `after paperless about ${fmtShort(x.tm.after)} (assumed)${x.tm.today > x.tm.after ? `; about ${fmtShort(x.tm.today - x.tm.after)} less` : ''}` }] }; }).filter(Boolean);
+  return chartHBars(rows, { aria: 'Time in each group\'s steps, today and after paperless', labW: 300, w: chartW().W, padR: 430 });
+}
+/* every step that carries a figure: today (typical) against after paperless; the average is written where it differs a lot from the typical */
+function stepTimeChart(port, dir){
+  const A = resolveSteps('asis', dir, port), T = resolveSteps('tobe', dir, port); const rows = [];
+  A.forEach(s => { const t = timeAsIs(port, dir, s); if (t.hours == null || t.cond) return; const succ = T.find(x => x.asis === s.id); const tt = succ ? timeToBe(port, dir, succ) : null; const afterH = succ ? (tt.hours != null ? tt.hours : 0) : 0;
+    const note = t.role === 'carry' && t.part.average > t.hours * 1.5 ? `average ${fmtShort(t.part.average)}: the slow quarter of trucks drags the average far above the typical truck` : (succ ? '' : 'the step disappears');
+    rows.push({ label: `${s.id} ${s.title.length > 46 ? s.title.slice(0, 44) + '…' : s.title}`, sub: actorLabel(s.actor), bars: [{ v: t.hours, color: t.basis === 'measured' ? SPANC[t.key] || CH.a : CH.asm, dash: t.basis !== 'measured', text: `today ${fmtShort(t.hours)} ${t.basis === 'measured' ? 'measured' : t.basis}` }, { v: afterH, color: CH.after, text: succ ? `after paperless ${fmtShort(afterH)} assumed (${tt.change.toLowerCase()})` : 'after paperless 0: step removed' }], note }); });
+  return chartHBars(rows, { aria: 'Time per step, today and after paperless', labW: 360, w: chartW().W, padR: 400 });
+}
 function phaseTimeTable(){
   const steps = resolveSteps('asis', 'import', 'ben');
   const why = { pre: 'Before the gate: the Indian-side queue is outside the data; the stops at zero point and the Customs cabin are assumed.', gate: 'The timing starts when the gate keys the entry; the queue at the window before that is assumed.', cus: 'Customs, the agencies and the bank are not in the port data; assumed from site visits.', load: 'The local truck is not in ISLAS; assumed.', bill: 'The local truck is not in ISLAS; the billing, payment and exit-pass steps are assumed.', ts: 'Only the warehouse receipt moment is recorded; for perishables the transfer sits inside the span carried at step 5.1.', wh: 'Unloading carries the biggest measured span; the Customs file check and examination are assumed; laboratory tests are reported by the port.' };
@@ -2817,21 +2997,21 @@ function tableBars(items, cols, opt){
   return xwrap(`<div class="table-wrap"><table class="tbt"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`, opt.name || 'BLPA_analytics_table');
 }
 function tile(v, l, cls=''){ return `<div class="kpi ${cls}"><b>${v}</b><span>${l}</span></div>`; }
-function actorPair(port, dir, actorKey){ const A = resolveSteps('asis', dir, port).filter(s => actorKey === 'all' ? s.actor !== 'sys' : s.actor === actorKey); const ids = new Set(A.map(s => s.id)); const T = resolveSteps('tobe', dir, port).filter(s => (s.asis && ids.has(s.asis)) || (!s.asis && (actorKey === 'all' ? s.actor !== 'sys' : s.actor === actorKey))); return { A, T }; }
+function actorSetOf(actorKey){ return actorKey === 'all' ? null : actorKey.startsWith('g:') ? new Set(lensActors(actorKey.slice(2))) : new Set([actorKey]); }
+function actorPair(port, dir, actorKey){ const set = actorSetOf(actorKey); const A = resolveSteps('asis', dir, port).filter(s => set ? set.has(s.actor) : s.actor !== 'sys'); const ids = new Set(A.map(s => s.id)); const T = resolveSteps('tobe', dir, port).filter(s => (s.asis && ids.has(s.asis)) || (!s.asis && (set ? set.has(s.actor) : s.actor !== 'sys'))); return { A, T }; }
 function actorStats(view, port, dir, actorKey){
-  const { A, T } = actorPair(port, dir, actorKey); const steps = view === 'asis' ? A : resolveSteps('tobe', dir, port).filter(s => actorKey === 'all' ? s.actor !== 'sys' : s.actor === actorKey); const ids = new Set(A.map(s => s.id));
-  const TRAV = { cf: ['cf'], drv: ['itruck', 'driver', 'ltruck'] }; const travKeys = actorKey === 'all' ? null : (TRAV[actorKey] || []);
-  let moves = 0, places = new Set(); const sp = SPAG[port];
-  if (sp && dir === 'import') sp.travellers.forEach(t => { if (travKeys && !travKeys.includes(t.key)) return; t.moves.forEach(m => { if (ids.has(m.step)) { moves++; places.add(m.from); places.add(m.to); } }); });
+  const { A, T } = actorPair(port, dir, actorKey); const set = actorSetOf(actorKey); const steps = view === 'asis' ? A : resolveSteps('tobe', dir, port).filter(s => set ? set.has(s.actor) : s.actor !== 'sys'); const ids = new Set(A.map(s => s.id));
+  const lensKey = actorKey === 'all' ? 'all' : actorKey.startsWith('g:') ? actorKey.slice(2) : lensOf(actorKey); const mv = moveTotals(port, dir, A, lensKey); const moves = mv.moves; const places = new Set(); const sp = spagFor(port, dir);
+  if (sp) sp.travellers.forEach(t => { if (lensKey !== 'all' && TRAV_LENS[t.key] !== lensKey) return; t.moves.forEach(m => { if (ids.has(m.step)) { places.add(m.from); places.add(m.to); } }); });
   const tm = timeTotals(port, dir, A, T); const drop = T.filter(s => ['Removed', 'Much shorter'].includes(timeToBe(port, dir, s).change)).length + A.filter(a => !T.some(t => t.asis === a.id)).length;
-  return { steps: steps.length, paper: steps.filter(s => s.manual).length, docs: steps.reduce((n, s) => n + (s.docs || []).length, 0), signs: steps.reduce((n, s) => n + (s.signs || []).length, 0), sys: steps.filter(s => s.sys).length, moves, places: places.size, tm, drop, hasSpag: !!(sp && dir === 'import' && (actorKey === 'all' || (travKeys && travKeys.length))) };
+  return { steps: steps.length, paper: steps.filter(s => s.manual).length, docs: steps.reduce((n, s) => n + (s.docs || []).length, 0), signs: steps.reduce((n, s) => n + (s.signs || []).length, 0), sys: steps.filter(s => s.sys).length, moves, movesAfter: mv.after, places: places.size, tm, drop, hasSpag: !!(sp && moves) };
 }
 function actorSummaryHtml(view, port, dir, actorKey){
-  const a = actorStats('asis', port, dir, actorKey), b = actorStats('tobe', port, dir, actorKey); const name = actorKey === 'all' ? 'all actors' : actorLabel(actorKey);
+  const a = actorStats('asis', port, dir, actorKey), b = actorStats('tobe', port, dir, actorKey); const name = actorKey === 'all' ? 'all actors' : actorKey.startsWith('g:') ? LENS[actorKey.slice(2)].label : actorLabel(actorKey);
   const row = (l, x, y) => `<tr><td class="k">${l}</td><td>${x}</td><td>${y}</td></tr>`;
   return `<div class="asum"><div class="asum-head"><b>${esc(name)} at a glance</b> · ${esc(PORTS[port].name)} · ${esc(dir)}</div><table class="asum-table"><thead><tr><th></th><th>Today</th><th>Paperless</th></tr></thead><tbody>
     ${row('Steps', a.steps, b.steps)}${row('Paper or manual steps', a.paper, b.paper)}${row('Documents handled', a.docs, b.docs)}${row('Signatures and stamps', a.signs, b.signs)}${row('Steps that create a system record', a.sys, b.sys)}
-    ${a.hasSpag ? row('Moves for one consignment', `${a.moves} between ${a.places} places`, 'see the spaghetti tab') : ''}
+    ${a.hasSpag ? row('Physical moves for one consignment', `${a.moves} between ${a.places} places`, `${a.movesAfter} still needed`) : ''}
     ${row('Time in these steps (typical)', fmtToday(a.tm), fmtAfter(a.tm) + (a.tm.today && a.tm.after < a.tm.today ? ` <small>about ${esc(fmtH(a.tm.today - a.tm.after))} less</small>` : ''))}${row('Steps where the wait is removed or much shorter', '', a.drop)}</tbody></table>${fmtCond(a.tm)}<p class="asum-note">One month of data, five timestamps per truck: the measured figures are the spans carried by this actor's steps; every other figure is an assumption to be validated.</p></div>`;
 }
 function renderAnalytics(){
@@ -2846,7 +3026,7 @@ function renderAnalytics(){
   const weekT = tableBars(A.weekday.filter(w => w.medianDwell != null).map(w => ({ label: w.wd, arrivals: w.arrivals, exits: w.exits, median: w.medianDwell, hi: w.medianDwell > A.stay.typical * 1.3 })), [{ key: 'label', label: 'Day of arrival' }, { key: 'arrivals', label: 'Arrivals a day' }, { key: 'exits', label: 'Exits a day' }, { key: 'median', label: 'Typical stay', bar: true, fmt: v => d(v) }], { barKey: 'median', name: 'BLPA_analytics_weekday' });
   const completeT = tableBars(A.completeness.map(x => ({ label: x.label, n: x.n, pct: x.pct, hi: x.pct < 90 })), [{ key: 'label', label: 'Recorded moment' }, { key: 'n', label: 'Trips with it', fmt: v => v.toLocaleString() }, { key: 'pct', label: 'Completeness', bar: true, fmt: v => v + '%' }], { barKey: 'pct', name: 'BLPA_analytics_completeness' });
   const actorsA = ACTORS.filter(a => a.key !== 'sys' && resolveSteps('asis', 'import', 'ben').some(s => s.actor === a.key));
-  const actorRows = actorsA.map(a => { const x = actorStats('asis', 'ben', 'import', a.key), y = actorStats('tobe', 'ben', 'import', a.key); return `<tr><td class="k">${esc(a.label)}</td><td>${x.steps} to ${y.steps}</td><td>${x.paper} to ${y.paper}</td><td>${x.docs} to ${y.docs}</td><td>${x.signs} to ${y.signs}</td><td>${x.hasSpag ? x.moves : 'n/a'}</td><td>${fmtToday(x.tm)}${fmtCond(x.tm)}</td><td>${fmtAfter(x.tm)}</td><td>${x.drop}</td></tr>`; });
+  const actorRows = actorsA.map(a => { const x = actorStats('asis', 'ben', 'import', a.key), y = actorStats('tobe', 'ben', 'import', a.key); return `<tr><td class="k">${esc(a.label)}</td><td>${esc(LENS[lensOf(a.key)]?.label || '')}</td><td>${x.steps} to ${y.steps}</td><td>${x.paper} to ${y.paper}</td><td>${x.docs} to ${y.docs}</td><td>${x.signs} to ${y.signs}</td><td>${x.hasSpag ? `${x.moves} to ${x.movesAfter}` : 'none'}</td><td>${fmtToday(x.tm)}${fmtCond(x.tm)}</td><td>${fmtAfter(x.tm)}</td><td>${x.drop}</td></tr>`; });
   const insights = A.insights.map(i => `<div class="ins"><b>${esc(i.title)}</b><p>${esc(i.text)}</p></div>`).join('');
   const L = id => `<a class="steplink" href="#" onclick="event.preventDefault();openBen('${id}')">`;
   el.innerHTML = `<div class="card" style="margin-top:8px"><h2>One month at Benapole: what the port's own records say</h2>
@@ -2855,6 +3035,8 @@ function renderAnalytics(){
     <div class="card"><h2>The process map with the month's time on it</h2><p class="body">The same journey as the AS-IS map, drawn to scale for three kinds of truck. Each segment is the time between two recorded moments; the moments are steps of the map and can be clicked.</p>${journeyRuler()}${MONTH_CAP()}
       <h3>Phase by phase: the time each phase carries</h3><p class="body">Coloured bars are measured, on the step of the map where the time is spent. Grey bars are assumptions for the steps the data cannot see. All bars are to the same scale.</p>${phaseChart()}<div id="an-phases">${phaseTimeTable()}</div></div>
     <div class="card"><h2>What the paperless process changes, phase by phase</h2><p class="body">Today's figure against the assumed figure after paperless, from the same numbers as the re-engineering table. Measured spans are taken at today's quickest quarter of trucks; assumed steps follow the fixed rule; unloading stays as today because it is physical work. These are targets to validate in the pilot, not forecasts.</p>${savingChart()}</div>
+    <div class="card"><h2>Steps, paper and moves by actor group</h2><p class="body">The same 54 steps read for the port as one actor, for the port users, for the trucks and for the outside parties. The number of steps is not the measure: the port keeps its steps and gains one, but its paper, its signatures and the walking of the port users fall. Figures follow the Benapole import flow; the same chart is in every group's summary on the re-engineering tab for the other flows.</p>${groupChart('ben', 'import')}<h3>Time in each group's steps</h3>${groupTimeChart('ben', 'import')}${TIME_CAVEAT()}</div>
+    <div class="card"><h2>Time per step, today and after paperless</h2><p class="body">Every step that carries a figure, in the order of the map. Measured spans are on the step where the time is spent and show the typical truck; where the average is far above the typical, the note says so, because the slow quarter of trucks is the case to fix. Assumed figures are grey and dashed.</p>${stepTimeChart('ben', 'import')}</div>
     <div class="card"><h2>What stands out</h2><div class="ins-grid">${insights}</div></div>
     <div class="card"><h2>The month, day by day</h2><p class="body">Every chart below runs over the same calendar, ${esc(A.meta.frm)} to ${esc(A.meta.to)}. Pink days have no report (mostly Fridays). The highest and lowest points are labelled.</p>
       <h3>Trucks in and out each day</h3>${dailyInOut}${MONTH_CAP()}
@@ -2863,7 +3045,7 @@ function renderAnalytics(){
     <div class="card"><h2>When trucks arrive, and what it costs them</h2><div class="two"><div><h3>Arrivals by weekday and hour</h3><p class="body">Average trucks entering per hour on each weekday over the month. The darker the cell, the busier the hour; pink means no reporting day. Arrivals bunch between 13:00 and 20:00, when the sheds are already full.</p>${heat}</div><div><h3>Typical stay by hour of arrival</h3><p class="body">Every point is labelled. Trucks that enter in the afternoon and evening stay about a day; the few that enter in the morning are out the same day.</p>${hourStay}</div></div>
       <h3>By weekday of arrival</h3>${weekT}${MONTH_CAP()}</div>
     <div class="card"><h2>How long trucks stay</h2><div class="two"><div><h3>Length of stay</h3>${distT}</div><div><h3>What the spread means</h3><p class="body">Half the trucks are out within a day and a quarter within ${esc(String(A.quartiles.p25))} hours, so the process can be quick; the slow quarter, ${esc(String(A.quartiles.p75))} hours or more, is where the posting-yard hold and the unloading wait pile up. Cargo weight barely matters: trucks over 30 t stay ${esc(d(A.weightBands[A.weightBands.length - 1].median))} against ${esc(d(A.weightBands[0].median))} for trucks under 10 t.</p></div></div>${MONTH_CAP()}</div>
-    <div class="card"><h2>The process by actor</h2><p class="body">From the process map for Benapole import: how much of the work each actor carries today and after the paperless process, with the time carried by that actor's steps. Moves on foot come from the spaghetti diagram and exist for the C&F agent and the drivers only.</p>${xtable(['Actor', 'Steps: today to paperless', 'Paper steps', 'Documents handled', 'Signatures', 'Moves for one consignment', 'Time in these steps today', 'After paperless', 'Steps where the wait is removed or much shorter'], actorRows, 1000, 'BLPA_analytics_by_actor')}${TIME_CAVEAT()}</div>
+    <div class="card"><h2>The process by actor</h2><p class="body">From the process map for Benapole import: how much of the work each actor carries today and after the paperless process, with the time carried by that actor's steps. Moves on foot come from the spaghetti diagram and exist for the C&F agent and the drivers only.</p>${xtable(['Actor', 'Group', 'Steps: today to paperless', 'Paper steps', 'Documents handled', 'Signatures', 'Physical moves: today to paperless', 'Time in these steps today', 'After paperless', 'Steps where the wait is removed or much shorter'], actorRows, 1000, 'BLPA_analytics_by_actor')}${TIME_CAVEAT()}</div>
     <div class="card"><h2>How good the data is</h2><div class="two"><div><h3>Completeness of each recorded moment</h3>${completeT}</div><div><h3>Notes</h3><ul class="notes"><li>${A.meta.missing.length} dates in the window have no report (${esc(A.meta.missing.map(x => x.slice(5).replace('-', '/')).join(', '))}); most are Fridays.</li><li>Two weighbridges shared the month: scale 1 took ${A.scales[0].trips.toLocaleString()} trucks and scale 2 ${A.scales[1].trips.toLocaleString()}; gate to weighing takes about ${A.scales[0].medianMin} and ${A.scales[1].medianMin} minutes respectively.</li><li>Customs assessment was still open on ${A.flags[0].pct}% of trips and duty unpaid on ${A.flags[1].pct}% when the report was pulled; those trucks had left less often (${A.flags[0].exitRate}% and ${A.flags[1].exitRate}% against ${A.flags[0].exitRateYes}% and ${A.flags[1].exitRateYes}%).</li><li>Weighed net weight exceeds the declared weight on ${A.declared.overPct}% of trips, typically by ${A.declared.medianKg} kg.</li><li>Trips longer than 40 days were treated as data errors and left out of the time figures.</li></ul></div></div></div>`;
   linkSteps(document.getElementById('an-phases'), 'asis', 'ben', 'import');
 }
